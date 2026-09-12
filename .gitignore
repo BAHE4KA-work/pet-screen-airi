@@ -10,4 +10,4 @@ coverage/
 *.gguf
 *.safetensor
 models/*.bin
-models/
+models
