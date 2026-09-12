@@ -114,7 +114,15 @@ export default function App() {
         target === document.body ||
         target === document.documentElement;
 
-      const shouldBeInteractive = isInteractiveElement && !isWorkspace;
+      // Allow bottom edge to pass directly to OS taskbar if not hovering on an active window
+      const isInsideHudOrWindow = Boolean(
+        target.closest('#floating-hud-window') ||
+        target.closest('.view-window') ||
+        target.closest('#settings-modal-window')
+      );
+      const isNearTaskbarEdge = clientY >= window.innerHeight - 8 && !isInsideHudOrWindow;
+
+      const shouldBeInteractive = isInteractiveElement && !isWorkspace && !isNearTaskbarEdge;
       setInteractivity(shouldBeInteractive);
     };
 

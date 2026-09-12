@@ -131,6 +131,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [primaryPalette, setPrimaryPaletteState] = useState<string>(() => themeManager.getPrimaryId());
   const [secondaryPalette, setSecondaryPaletteState] = useState<string>(() => themeManager.getSecondaryId());
 
+  // Toggle tool
+  const handleToggleTool = async (e: React.MouseEvent, toolId: string, currentEnabled: boolean) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch(`/api/tools/${toolId}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !currentEnabled })
+      });
+      if (res.ok) {
+        await onReloadModules();
+        soundEffects.playCompletionPing();
+      }
+    } catch (err) {
+      console.error('Failed to toggle tool:', err);
+    }
+  };
+
+  // Toggle entire module
+  const handleToggleModule = async (moduleName: string, enableAll: boolean) => {
+    try {
+      const res = await fetch(`/api/modules/${moduleName}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: enableAll })
+      });
+      if (res.ok) {
+        await onReloadModules();
+        soundEffects.playCompletionPing();
+      }
+    } catch (err) {
+      console.error('Failed to toggle module:', err);
+    }
+  };
+
   useEffect(() => {
     if (currentTool) {
       setEditingCode(currentTool.code);
@@ -314,12 +349,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeTab === 'tools' && (
               <div className="space-y-4 max-w-3xl">
                 <div className="flex items-center justify-between pb-2 border-b border-[var(--c-border)]">
-                  <h3 className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
-                    Инструменты
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
+                      Инструменты и Модули
+                    </h3>
+                    <Badge variant="neutral">
+                      {tools.filter(t => t.enabled).length} / {tools.length} активны
+                    </Badge>
+                  </div>
 
                   <div className="flex items-center gap-2">
-                    {/* Compact JSON Button with standard height */}
                     <Button
                       id="export-finetuning-dataset-btn"
                       size="md"
@@ -350,28 +389,89 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
 
-                {/* Vertical Layout for Tools */}
+                {/* Vertical Layout for Modules & Tools */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {/* Left: Vertical list of tools without description */}
-                  <div className="space-y-1.5 max-h-96 overflow-y-auto pr-1">
-                    {tools.map(tool => {
-                      const isSelected = tool.id === selectedToolId;
+                  {/* Left: Grouped by module with enable/disable toggles */}
+                  <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                    {Array.from(new Set(tools.map(t => String(t.module || 'system')))).map((moduleName: string) => {
+                      const moduleTools = tools.filter(t => (t.module || 'system') === moduleName);
+                      const isModuleFullyEnabled = moduleTools.every(t => t.enabled);
+                      const isModulePartiallyEnabled = moduleTools.some(t => t.enabled);
+
                       return (
-                        <button
-                          key={tool.id}
-                          onClick={() => setSelectedToolId(tool.id)}
-                          className="w-full text-left px-3 py-2.5 rounded-xl border transition-all text-xs flex items-center justify-between"
+                        <div
+                          key={moduleName}
+                          className="rounded-xl border p-2 space-y-1.5"
                           style={{
-                            backgroundColor: isSelected ? 'var(--c-peach-surface)' : 'var(--c-bg-secondary)',
-                            borderColor: isSelected ? 'var(--c-peach-border)' : 'var(--c-border)',
-                            color: isSelected ? 'var(--c-peach-light)' : 'var(--c-text)'
+                            backgroundColor: 'rgba(26, 30, 40, 0.4)',
+                            borderColor: 'var(--c-border)'
                           }}
                         >
-                          <span className="font-mono font-medium truncate">{tool.name}</span>
-                          <Badge variant={isSelected ? 'peach' : 'neutral'} size="sm">
-                            v{tool.version}
-                          </Badge>
-                        </button>
+                          {/* Module Header with Toggle */}
+                          <div className="flex items-center justify-between px-1.5 py-1 border-b border-white/5">
+                            <span className="text-xs font-semibold uppercase tracking-wider font-mono text-[var(--c-peach-light)]">
+                              {moduleName}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => handleToggleModule(moduleName, !isModuleFullyEnabled)}
+                              className={`text-[10px] px-2 py-0.5 rounded font-mono font-medium transition-all ${
+                                isModuleFullyEnabled
+                                  ? 'bg-[var(--c-peach-surface)] text-[var(--c-peach-light)] border border-[var(--c-peach-border)]'
+                                  : isModulePartiallyEnabled
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                  : 'bg-zinc-800 text-zinc-500 border border-zinc-700'
+                              }`}
+                              title="Включить/Отключить все инструменты модуля"
+                            >
+                              {isModuleFullyEnabled ? 'ВКЛ' : isModulePartiallyEnabled ? 'ЧАСТИЧНО' : 'ВЫКЛ'}
+                            </button>
+                          </div>
+
+                          {/* Tools in Module */}
+                          <div className="space-y-1">
+                            {moduleTools.map(tool => {
+                              const isSelected = tool.id === selectedToolId;
+                              const isEnabled = tool.enabled;
+
+                              return (
+                                <div
+                                  key={tool.id}
+                                  onClick={() => setSelectedToolId(tool.id)}
+                                  className={`w-full text-left px-2.5 py-1.5 rounded-lg border transition-all text-xs flex items-center justify-between cursor-pointer select-none ${
+                                    !isEnabled ? 'opacity-50' : ''
+                                  }`}
+                                  style={{
+                                    backgroundColor: isSelected ? 'var(--c-peach-surface)' : 'var(--c-bg-secondary)',
+                                    borderColor: isSelected ? 'var(--c-peach-border)' : 'var(--c-border)',
+                                    color: isSelected ? 'var(--c-peach-light)' : 'var(--c-text)'
+                                  }}
+                                >
+                                  <div className="flex items-center gap-2 truncate">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleToggleTool(e, tool.id, isEnabled)}
+                                      className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors ${
+                                        isEnabled
+                                          ? 'bg-[var(--c-peach)] border-[var(--c-peach)] text-zinc-950'
+                                          : 'border-zinc-600 bg-zinc-900 text-transparent'
+                                      }`}
+                                      title={isEnabled ? 'Отключить инструмент' : 'Включить инструмент'}
+                                    >
+                                      <Check className="w-2.5 h-2.5" />
+                                    </button>
+                                    <span className="font-mono font-medium truncate">{tool.name}</span>
+                                  </div>
+
+                                  <Badge variant={isSelected ? 'peach' : 'neutral'} size="sm">
+                                    v{tool.version}
+                                  </Badge>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
@@ -386,14 +486,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             <span className="font-semibold" style={{ color: 'var(--c-text)' }}>
                               {currentTool.filePath}
                             </span>
+                            <Badge variant={currentTool.enabled ? 'peach' : 'neutral'} size="sm">
+                              {currentTool.enabled ? 'Активен' : 'Отключен'}
+                            </Badge>
                           </div>
 
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onDeleteTool(currentTool.id)}
-                            icon={<Trash2 className="w-3.5 h-3.5 text-[var(--c-mint-light)]" />}
-                          />
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant={currentTool.enabled ? 'outline' : 'primary'}
+                              onClick={(e) => handleToggleTool(e, currentTool.id, currentTool.enabled)}
+                            >
+                              {currentTool.enabled ? 'Отключить' : 'Включить'}
+                            </Button>
+
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onDeleteTool(currentTool.id)}
+                              icon={<Trash2 className="w-3.5 h-3.5 text-[var(--c-mint-light)]" />}
+                            />
+                          </div>
                         </div>
 
                         {/* Version input */}
@@ -795,29 +908,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     <div className="py-2 flex items-center justify-between">
                       <span style={{ color: 'var(--c-text-muted)' }}>Базовая модель</span>
-                      <span className="font-mono font-medium" style={{ color: 'var(--c-peach-light)' }}>FunctionGemma-7B (FineTuned)</span>
-                    </div>
-
-                    <div className="py-2 flex items-center justify-between">
-                      <span style={{ color: 'var(--c-text-muted)' }}>Формат весов</span>
-                      <span className="font-mono" style={{ color: 'var(--c-text)' }}>GGUF Q4_K_M (4-bit quant)</span>
-                    </div>
-
-                    <div className="py-2 flex items-center justify-between">
-                      <span style={{ color: 'var(--c-text-muted)' }}>Контрольная сумма SHA-256</span>
-                      <span className="font-mono text-[11px] truncate max-w-[200px]" style={{ color: 'var(--c-text)' }}>
-                        {currentChecksum || '6c8fa8e...'}
+                      <span className="font-mono font-medium" style={{ color: 'var(--c-peach-light)' }}>
+                        {status?.modelName || 'FunctionGemma-7B (FineTuned)'}
                       </span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">
-                      <span style={{ color: 'var(--c-text-muted)' }}>Рантайм</span>
-                      <span className="font-mono" style={{ color: 'var(--c-text)' }}>Node.js / Express / Vite</span>
+                      <span style={{ color: 'var(--c-text-muted)' }}>Тип рантайма модели</span>
+                      <span className="font-mono" style={{ color: 'var(--c-text)' }}>
+                        {status?.modelType === 'local_custom'
+                          ? 'Локальный рантайм (GGUF / RAM)'
+                          : status?.modelType === 'ollama'
+                          ? 'Ollama Local Endpoint'
+                          : 'Облачный рантайм (Gemini / Fallback)'}
+                      </span>
+                    </div>
+
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Статус загрузки в память</span>
+                      <span className="font-mono font-medium" style={{ color: status?.loaded ? 'var(--c-peach-light)' : 'var(--c-text-muted)' }}>
+                        {status?.loaded ? 'Загружена в ОЗУ' : 'Выгружена (по требованию)'}
+                      </span>
+                    </div>
+
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Контрольная сумма сигнатур (SHA-256)</span>
+                      <span className="font-mono text-[11px] truncate max-w-[220px]" style={{ color: 'var(--c-text)' }} title={currentChecksum}>
+                        {currentChecksum || 'Не вычислена'}
+                      </span>
+                    </div>
+
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Совместимость манифеста</span>
+                      <span className="font-mono text-[11px]" style={{ color: status?.conflict?.hasConflict ? '#f87171' : '#34d399' }}>
+                        {status?.conflict?.hasConflict ? 'Конфликт сигнатур' : 'Совместимо (Синхронизировано)'}
+                      </span>
+                    </div>
+
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Активных инструментов</span>
+                      <span className="font-mono" style={{ color: 'var(--c-text)' }}>
+                        {tools.filter(t => t.enabled).length} из {tools.length}
+                      </span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">
                       <span style={{ color: 'var(--c-text-muted)' }}>Режим отображения</span>
-                      <span className="font-mono" style={{ color: 'var(--c-text)' }}>Hardware-accelerated Transparent Overlay</span>
+                      <span className="font-mono" style={{ color: 'var(--c-text)' }}>
+                        Hardware-accelerated Transparent Overlay (Click-Through)
+                      </span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">

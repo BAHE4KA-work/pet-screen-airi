@@ -9,6 +9,7 @@ import { storageService } from './server/storageService';
 import { sttService } from './server/sttService';
 import { modelRouterService } from './server/modelRouter';
 import { localModelsManager } from './server/localModelsManager';
+import { localModelRuntime } from './server/localModelRuntime';
 
 dotenv.config();
 
@@ -461,6 +462,61 @@ app.post('/api/models/local/descriptor', (req, res) => {
   }
   const result = localModelsManager.createModelDescriptor(category, filename, descriptor);
   res.json({ success: true, ...result, overview: localModelsManager.scanModels() });
+});
+
+// API: Model Runtime RAM Management (Load / Unload / Status)
+app.get('/api/models/runtime', (req, res) => {
+  res.json(localModelRuntime.getState());
+});
+
+app.post('/api/models/load', async (req, res) => {
+  try {
+    const { category = 'basemodel', filename } = req.body;
+    const runtime = await localModelRuntime.loadModel(category, filename);
+    res.json({ success: true, runtime, modelStatus: modulesRegistry.getModelStatus() });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(400).json({ success: false, error: msg });
+  }
+});
+
+app.post('/api/models/unload', (req, res) => {
+  const runtime = localModelRuntime.unloadModel();
+  res.json({ success: true, runtime, modelStatus: modulesRegistry.getModelStatus() });
+});
+
+// API: Toggle Module (all tools in module)
+app.post('/api/modules/:module/toggle', (req, res) => {
+  const { enabled } = req.body;
+  const moduleName = req.params.module;
+  const updatedTools = modulesRegistry.toggleModule(moduleName, Boolean(enabled));
+  const currentChecksum = modulesRegistry.getCurrentChecksum();
+  res.json({
+    success: true,
+    module: moduleName,
+    enabled: Boolean(enabled),
+    updatedTools,
+    currentChecksum,
+    conflict: modulesRegistry.checkConflict()
+  });
+});
+
+// API: Toggle Individual Tool
+app.post('/api/tools/:id/toggle', (req, res) => {
+  const { enabled } = req.body;
+  const toolId = req.params.id;
+  const updatedTool = modulesRegistry.toggleTool(toolId, typeof enabled === 'boolean' ? enabled : undefined);
+  if (!updatedTool) {
+    res.status(404).json({ error: 'Инструмент не найден.' });
+    return;
+  }
+  const currentChecksum = modulesRegistry.getCurrentChecksum();
+  res.json({
+    success: true,
+    tool: updatedTool,
+    currentChecksum,
+    conflict: modulesRegistry.checkConflict()
+  });
 });
 
 // API: Execution Logs

@@ -11,9 +11,13 @@ export const electronBridge = {
 
   setInteractive: (interactive: boolean) => {
     if (typeof window !== 'undefined' && (window as any).electron?.setIgnoreMouseEvents) {
-      // interactive = true => ignore = false (capture clicks)
-      // interactive = false => ignore = true (pass clicks to desktop)
-      (window as any).electron.setIgnoreMouseEvents(!interactive);
+      // interactive = true => ignore = false (capture clicks in window)
+      // interactive = false => ignore = true with { forward: true } (pass clicks to OS taskbar/desktop while keeping mousemove active)
+      if (interactive) {
+        (window as any).electron.setIgnoreMouseEvents(false);
+      } else {
+        (window as any).electron.setIgnoreMouseEvents(true, { forward: true });
+      }
     }
   },
 

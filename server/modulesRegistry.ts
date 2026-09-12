@@ -237,6 +237,30 @@ class ModulesRegistry {
     return this.tools.delete(id);
   }
 
+  public toggleTool(id: string, enabled?: boolean): ToolDefinition | undefined {
+    const tool = this.getTool(id);
+    if (!tool) return undefined;
+    const nextEnabled = enabled !== undefined ? enabled : !tool.enabled;
+    const updated: ToolDefinition = {
+      ...tool,
+      enabled: nextEnabled
+    };
+    this.tools.set(tool.id, updated);
+    return updated;
+  }
+
+  public toggleModule(moduleName: string, enabled: boolean): ToolDefinition[] {
+    const updatedTools: ToolDefinition[] = [];
+    for (const [id, tool] of this.tools.entries()) {
+      if (tool.module === moduleName) {
+        const updated = { ...tool, enabled };
+        this.tools.set(id, updated);
+        updatedTools.push(updated);
+      }
+    }
+    return updatedTools;
+  }
+
   public reloadAll(): { total: number; actualChecksum: string } {
     this.loadModulesFromDisk();
     for (const [id, tool] of this.tools.entries()) {
@@ -505,6 +529,30 @@ class ModulesRegistry {
         }
         if ('views' in result && Array.isArray(result.views)) {
           views = result.views as ViewSpec[];
+        }
+      }
+
+      // If tool did not provide a view, create an automatic structured view window
+      if (!view && (!views || views.length === 0)) {
+        if (typeof result === 'object' && result !== null) {
+          const entries = Object.entries(result as Record<string, unknown>).map(([k, v]) => ({
+            label: k,
+            value: typeof v === 'object' ? JSON.stringify(v) : String(v)
+          }));
+          view = viewsFactory.createKeyValueView({
+            title: `Результат: ${tool.name}`,
+            entries
+          }, {
+            title: tool.description || `Инструмент ${tool.name}`
+          });
+        } else {
+          view = viewsFactory.createTextView({
+            title: `Результат: ${tool.name}`,
+            content: String(result),
+            contentType: 'text'
+          }, {
+            title: tool.description || `Инструмент ${tool.name}`
+          });
         }
       }
 

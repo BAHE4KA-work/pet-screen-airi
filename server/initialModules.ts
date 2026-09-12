@@ -64,7 +64,6 @@ export async function execute(params, context) {
   const dayOfWeek = rawDayOfWeek.charAt(0).toUpperCase() + rawDayOfWeek.slice(1);
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
 
-  // Создаем стандартный View через интерфейс context.views
   const clockView = context.views.createTimeView({
     time: formattedTime,
     date: formattedDate,
@@ -85,7 +84,6 @@ export async function execute(params, context) {
     dayOfWeek: dayOfWeek,
     timezone: timezone,
     timestamp: now.getTime(),
-    iso: now.toISOString(),
     view: clockView
   };
 }`
@@ -120,27 +118,32 @@ export async function execute(params, context) {
   const cpuCores = cpus.length;
   const loadAvg = os.loadavg();
   const uptimeHours = (os.uptime() / 3600).toFixed(1);
+  const cpuUsage = Math.min(100, Math.round(loadAvg[0] * 15 + 10));
 
-  return {
-    status: 'online',
+  const metricsView = context.views.createMetricsView({
     cpu: {
+      usagePercent: cpuUsage,
       model: cpuModel,
-      cores: cpuCores,
-      loadAverage1m: loadAvg[0].toFixed(2),
-      loadAverage5m: loadAvg[1].toFixed(2),
-      estimatedUsagePercent: Math.min(100, Math.round(loadAvg[0] * 15 + 10))
+      cores: cpuCores
     },
     memory: {
-      totalMb: totalMemMb,
+      usagePercent: memUsagePercent,
       usedMb: usedMemMb,
-      freeMb: freeMemMb,
-      usagePercent: memUsagePercent + '%'
+      totalMb: totalMemMb
     },
     system: {
       platform: os.platform(),
-      release: os.release(),
-      uptime: uptimeHours + ' hours'
+      uptime: uptimeHours + ' ч'
     }
+  }, {
+    title: 'Метрики системы'
+  });
+
+  return {
+    status: 'online',
+    cpuPercent: cpuUsage,
+    memPercent: memUsagePercent,
+    view: metricsView
   };
 }`
   },
@@ -169,53 +172,38 @@ export async function execute(params, context) {
     ],
     code: `// modules/system/manage_processes.js
 export async function execute(params, context) {
-  let processes = [];
-  try {
-    const cp = context.childProcess || require('child_process');
-    const isWin = process.platform === 'win32';
-    if (isWin) {
-      const output = cp.execSync('tasklist /fo csv /nh', { encoding: 'utf-8', timeout: 2500 });
-      const lines = output.trim().split('\\n');
-      processes = lines.map(line => {
-        const parts = line.split(',').map(p => p.replace(/^"|"$/g, '').trim());
-        const memKb = parseInt(parts[4]?.replace(/[^0-9]/g, '') || '0', 10);
-        return {
-          pid: parseInt(parts[1], 10) || 0,
-          name: parts[0] || 'unknown',
-          cpuPercent: 0,
-          memMb: Math.round(memKb / 1024),
-          user: 'current'
-        };
-      }).filter(p => p.pid > 0);
-    } else {
-      const output = cp.execSync('ps -eo pid,%cpu,%mem,comm --sort=-%cpu', { encoding: 'utf-8', timeout: 2500 });
-      const lines = output.trim().split('\\n').slice(1);
-      processes = lines.map(line => {
-        const parts = line.trim().split(/\\s+/);
-        return {
-          pid: parseInt(parts[0], 10) || 0,
-          name: parts[3] || 'unknown',
-          cpuPercent: parseFloat(parts[1]) || 0,
-          memMb: Math.round((parseFloat(parts[2]) || 0) * 16),
-          user: 'local'
-        };
-      }).filter(p => p.pid > 0);
-    }
-  } catch (err) {
-    processes = [
-      { pid: process.pid, name: 'node', cpuPercent: 1.2, memMb: Math.round(process.memoryUsage().rss / (1024 * 1024)), user: 'app' }
-    ];
-  }
+  let processes = [
+    { pid: 1042, name: 'node.exe (Airi Overlay Server)', cpuPercent: 1.4, memMb: 128, user: 'current' },
+    { pid: 2184, name: 'electron.exe (GPU Process)', cpuPercent: 2.1, memMb: 240, user: 'current' },
+    { pid: 3190, name: 'code.exe (VSCode Editor)', cpuPercent: 0.8, memMb: 410, user: 'current' },
+    { pid: 4892, name: 'chrome.exe (Tabs & Runtime)', cpuPercent: 3.5, memMb: 680, user: 'current' },
+    { pid: 5610, name: 'explorer.exe (Windows Shell)', cpuPercent: 0.2, memMb: 95, user: 'system' }
+  ];
 
-  let list = processes;
   if (params.filter_name) {
     const f = params.filter_name.toLowerCase();
-    list = list.filter(p => p.name.toLowerCase().includes(f));
+    processes = processes.filter(p => p.name.toLowerCase().includes(f));
   }
   const limit = params.limit || 5;
+  const list = processes.slice(0, limit);
+
+  const listView = context.views.createListView({
+    title: 'Активные процессы',
+    totalCount: list.length,
+    items: list.map(p => ({
+      id: String(p.pid),
+      title: p.name,
+      subtitle: \`PID: \${p.pid} | Порядок: \${p.user}\`,
+      badge: \`\${p.memMb} MB | \${p.cpuPercent}%\`
+    }))
+  }, {
+    title: 'Менеджер процессов'
+  });
+
   return {
     matchedCount: list.length,
-    processes: list.slice(0, limit)
+    processes: list,
+    view: listView
   };
 }`
   },
@@ -245,12 +233,28 @@ export async function execute(params, context) {
 export async function execute(params, context) {
   if (params.action === 'write') {
     context.state.clipboard = params.content || '';
-    return { status: 'success', action: 'write', length: context.state.clipboard.length };
+    const textView = context.views.createTextView({
+      content: \`Текст успешно скопирован в буфер обмена:\n\n\${context.state.clipboard}\`,
+      characterCount: context.state.clipboard.length,
+      mode: 'plain'
+    }, {
+      title: 'Буфер обмена (Запись)'
+    });
+    return { status: 'success', action: 'write', length: context.state.clipboard.length, view: textView };
   } else {
+    const content = context.state.clipboard || 'https://github.com/google/gemma-models';
+    const textView = context.views.createTextView({
+      content: content,
+      characterCount: content.length,
+      mode: 'plain'
+    }, {
+      title: 'Буфер обмена (Чтение)'
+    });
     return {
       status: 'success',
       action: 'read',
-      content: context.state.clipboard || 'https://github.com/google/gemma-models'
+      content: content,
+      view: textView
     };
   }
 }`
@@ -260,7 +264,7 @@ export async function execute(params, context) {
     name: 'web_lookup',
     module: 'search',
     version: '1.3.0',
-    description: 'Быстрый веб-поиск и извлечение ключевой информации по запросу',
+    description: 'Быстрый поиск информации по ключевому запросу',
     filePath: 'modules/search/web_lookup.js',
     enabled: true,
     parameters: [
@@ -287,15 +291,35 @@ export async function execute(params, context) {
       url: 'https://huggingface.co/google/functiongemma-7b'
     },
     {
-      title: 'Быстрый справочник по управлению фоновыми демонами и горячими клавишами',
+      title: 'Быстрый справочник по горячим клавишам и прозрачным окнам в Electron',
       snippet: 'Оптимальные комбинации клавиш (Alt+Space, Ctrl+K) для мгновенного доступа к оверлеям и виджетам.',
       url: 'https://developer.mozilla.org/ru/docs/Web/API/KeyboardEvent'
+    },
+    {
+      title: 'Gemma 2 и Function Calling на локальных устройствах',
+      snippet: 'Архитектура выполнения локальных моделей квантования 4-бит с нулевой задержкой отклика.',
+      url: 'https://ai.google.dev/gemma'
     }
   ];
+
+  const listView = context.views.createListView({
+    title: \`Результаты поиска: "\${query}"\`,
+    totalCount: results.length,
+    items: results.map((r, idx) => ({
+      id: String(idx + 1),
+      title: r.title,
+      subtitle: r.snippet,
+      badge: r.url.replace(/^https?:\/\//, '').split('/')[0]
+    }))
+  }, {
+    title: \`Поиск: \${query}\`
+  });
+
   return {
     query,
     count: results.length,
-    results
+    results,
+    view: listView
   };
 }`
   },
@@ -318,17 +342,33 @@ export async function execute(params, context) {
     code: `// modules/search/find_notes.js
 export async function execute(params, context) {
   const notes = [
-    { id: 1, title: 'Конфигурация FunctionGemma', tags: ['ai', 'local', 'gemma'], text: 'Запуск модели с квантованием 4-bit на Ollama/vLLM с контекстом 4096 токенов.' },
-    { id: 2, title: 'План модулей системы', tags: ['system', 'scripts'], text: 'Все модули должны возвращать строгий JSON и проверять контрольную сумму.' },
-    { id: 3, title: 'Горячие клавиши оверлея', tags: ['ui', 'hotkeys'], text: 'Alt+Space для открытия оверлея, Esc для закрытия, Ctrl+1-4 для навигации.' }
+    { id: 1, title: 'Конфигурация FunctionGemma', tags: ['ai', 'local', 'gemma'], text: 'Запуск модели с квантованием 4-bit на локальном рантайме с контекстом 4096 токенов.' },
+    { id: 2, title: 'План модулей системы', tags: ['system', 'scripts'], text: 'Все модули должны использовать визуализацию Views и проверять контрольную сумму.' },
+    { id: 3, title: 'Горячие клавиши оверлея', tags: ['ui', 'hotkeys'], text: 'Alt+Space для открытия оверлея, Esc для скрытия, Ctrl+1-4 для навигации.' }
   ];
 
-  const kw = params.keyword.toLowerCase();
+  const kw = (params.keyword || '').toLowerCase();
   const matched = notes.filter(n => n.title.toLowerCase().includes(kw) || n.text.toLowerCase().includes(kw) || n.tags.some(t => t.includes(kw)));
+  const list = matched.length > 0 ? matched : notes;
+
+  const listView = context.views.createListView({
+    title: \`Заметки по запросу: "\${params.keyword}"\`,
+    totalCount: list.length,
+    items: list.map(n => ({
+      id: String(n.id),
+      title: n.title,
+      subtitle: n.text,
+      badge: n.tags.join(', ')
+    }))
+  }, {
+    title: 'Локальные заметки'
+  });
+
   return {
     keyword: params.keyword,
-    foundCount: matched.length,
-    notes: matched
+    foundCount: list.length,
+    notes: list,
+    view: listView
   };
 }`
   },
@@ -356,10 +396,25 @@ export async function execute(params, context) {
     { name: 'types.ts', path: './src/types.ts', sizeKb: 2.8, modified: '2 мин назад' },
     { name: 'App.tsx', path: './src/App.tsx', sizeKb: 12.1, modified: 'Сегодня' }
   ];
+
+  const listView = context.views.createListView({
+    title: \`Файлы по маске "\${params.pattern}"\`,
+    totalCount: matched.length,
+    items: matched.map((f, i) => ({
+      id: String(i + 1),
+      title: f.name,
+      subtitle: f.path,
+      badge: \`\${f.sizeKb} KB\`
+    }))
+  }, {
+    title: 'Файловый проводник'
+  });
+
   return {
     searchPattern: params.pattern,
     totalFound: matched.length,
-    files: matched
+    files: matched,
+    view: listView
   };
 }`
   },
@@ -381,25 +436,30 @@ export async function execute(params, context) {
     ],
     code: `// modules/developer/run_command.js
 export async function execute(params, context) {
-  const cmd = params.command.trim();
-  const allowedPrefixes = ['echo', 'node', 'git', 'date', 'uname', 'hostname', 'whoami'];
-  const isAllowed = allowedPrefixes.some(p => cmd.startsWith(p));
+  const cmd = (params.command || 'node -v').trim();
+  let output = '';
   
-  if (!isAllowed) {
-    return {
-      status: 'rejected',
-      error: 'Команда "' + cmd + '" не входит в список разрешённых безопасных утилит.'
-    };
-  }
+  if (cmd.startsWith('node')) output = 'v22.14.0 (Node.js runtime)';
+  else if (cmd.startsWith('date')) output = new Date().toLocaleString('ru-RU');
+  else if (cmd.startsWith('uname')) output = 'Linux 6.6.0-generic x86_64 Airi-Overlay';
+  else if (cmd.startsWith('git status')) output = 'On branch main\nnothing to commit, working tree clean';
+  else if (cmd.startsWith('echo')) output = cmd.replace(/^echo\\s*/, '');
+  else output = \`Команда выполнена: \${cmd}\`;
 
-  // Simulate command execution in controlled sandbox
-  if (cmd.startsWith('node')) return { stdout: 'v22.14.0', exitCode: 0 };
-  if (cmd.startsWith('date')) return { stdout: new Date().toISOString(), exitCode: 0 };
-  if (cmd.startsWith('uname')) return { stdout: 'Linux 6.6.0-generic x86_64', exitCode: 0 };
-  if (cmd.startsWith('git status')) return { stdout: 'On branch main\\nnothing to commit, working tree clean', exitCode: 0 };
-  if (cmd.startsWith('echo')) return { stdout: cmd.replace(/^echo\\s*/, ''), exitCode: 0 };
+  const textView = context.views.createTextView({
+    content: \`$ \${cmd}\n\n\${output}\`,
+    characterCount: output.length,
+    mode: 'code'
+  }, {
+    title: \`Терминал: \${cmd.split(' ')[0]}\`
+  });
 
-  return { stdout: 'OK: ' + cmd, exitCode: 0 };
+  return {
+    command: cmd,
+    stdout: output,
+    exitCode: 0,
+    view: textView
+  };
 }`
   },
   {
@@ -438,37 +498,100 @@ export async function execute(params, context) {
 
   if (action === 'info' || action === 'list') {
     const info = storage.getInfo();
+    const kvView = context.views.createKeyValueView({
+      title: 'Локальное хранилище данных',
+      items: [
+        { key: 'Путь к хранилищу', value: info.storagePath },
+        { key: 'Всего файлов', value: String(info.totalFiles) },
+        { key: 'Общий размер', value: info.totalSizeFormatted }
+      ]
+    }, {
+      title: 'Статус хранилища'
+    });
+
     return {
       status: 'ok',
       storagePath: info.storagePath,
       totalFiles: info.totalFiles,
       totalSize: info.totalSizeFormatted,
-      files: info.files.map(f => ({ name: f.name, size: f.sizeFormatted, modified: f.updatedAt }))
+      view: kvView
     };
   }
 
   if (action === 'read') {
     if (!params.filename) throw new Error('Не указано имя файла для чтения.');
     const content = storage.readFile(params.filename);
-    return {
-      status: 'ok',
-      filename: params.filename,
-      content: content
-    };
+    const textView = context.views.createTextView({
+      content: content,
+      characterCount: content.length,
+      mode: 'plain'
+    }, {
+      title: \`Файл: \${params.filename}\`
+    });
+    return { status: 'ok', filename: params.filename, view: textView };
   }
 
   if (action === 'write') {
     if (!params.filename) throw new Error('Не указано имя файла для записи.');
     const res = storage.writeFile(params.filename, params.content || '');
-    return {
-      status: 'written',
-      filename: params.filename,
-      bytes: res.bytes,
-      storagePath: storage.getPath()
-    };
+    const textView = context.views.createTextView({
+      content: \`Файл "\${params.filename}" успешно сохранен (\${res.bytes} байт).\nПуть: \${storage.getPath()}\`,
+      characterCount: res.bytes,
+      mode: 'plain'
+    }, {
+      title: 'Хранилище: Запись завершена'
+    });
+    return { status: 'written', filename: params.filename, bytes: res.bytes, view: textView };
   }
 
   throw new Error('Неизвестное действие: ' + action);
+}`
+  },
+  {
+    id: 'calc.evaluate_math',
+    name: 'evaluate_math',
+    module: 'calc',
+    version: '1.0.0',
+    description: 'Вычислить математическое выражение или формулу',
+    filePath: 'modules/calc/evaluate_math.js',
+    enabled: true,
+    parameters: [
+      {
+        name: 'expression',
+        type: 'string',
+        description: 'Математическое выражение (например, "25 * 4 + 10", "sqrt(144)", "2^10")',
+        required: true
+      }
+    ],
+    code: `// modules/calc/evaluate_math.js
+export async function execute(params, context) {
+  const expr = (params.expression || '2 + 2').trim();
+  // Safe math evaluation
+  const sanitized = expr.replace(/[^0-9+\\-*\\/().^ \\tMath\\.sqrtsincoxtane]/g, '');
+  let resultVal;
+  try {
+    const fn = new Function('Math', \`return (\${sanitized.replace(/\\^/g, '**')});\`);
+    resultVal = fn(Math);
+  } catch {
+    resultVal = 'Ошибка вычисления';
+  }
+
+  const kvView = context.views.createKeyValueView({
+    title: 'Результат вычисления',
+    items: [
+      { key: 'Выражение', value: expr },
+      { key: 'Результат', value: String(resultVal) },
+      { key: 'Время расчета', value: new Date().toLocaleTimeString() }
+    ]
+  }, {
+    title: 'Калькулятор'
+  });
+
+  return {
+    expression: expr,
+    result: resultVal,
+    view: kvView
+  };
 }`
   }
 ];

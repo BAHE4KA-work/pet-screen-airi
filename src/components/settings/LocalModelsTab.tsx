@@ -9,18 +9,33 @@ import {
   Brain,
   FolderOpen,
   Check,
-  Plus
+  Plus,
+  Cpu,
+  Zap,
+  PowerOff
 } from 'lucide-react';
-import { LocalModelsOverview, LocalModelFile, LocalModelCategoryInfo } from '../../types';
+import { LocalModelsOverview, LocalModelCategoryInfo } from '../../types';
 import { soundEffects } from '../../utils/audioEffects';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
 import { Input } from '../ui/Input';
 
+interface ModelRuntimeState {
+  loaded: boolean;
+  loadedModel: string | null;
+  loadedCategory: string | null;
+  loadedAt: string | null;
+  ramUsageBytes: number;
+  ramUsageFormatted: string;
+  source: 'RAM_LOCAL_FILE' | 'ENDPOINT' | 'UNLOADED';
+}
+
 export const LocalModelsTab: React.FC = () => {
   const [overview, setOverview] = useState<LocalModelsOverview | null>(null);
+  const [runtime, setRuntime] = useState<ModelRuntimeState | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingRam, setLoadingRam] = useState(false);
   const [activeCategory, setActiveCategory] = useState<string>('basemodel');
   const [showAddModal, setShowAddModal] = useState(false);
   const [newModelName, setNewModelName] = useState('');
@@ -31,13 +46,21 @@ export const LocalModelsTab: React.FC = () => {
   const fetchOverview = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/models/local');
-      if (res.ok) {
-        const data = await res.json();
+      const [resModels, resRuntime] = await Promise.all([
+        fetch('/api/models/local'),
+        fetch('/api/models/runtime')
+      ]);
+
+      if (resModels.ok) {
+        const data = await resModels.json();
         setOverview(data);
       }
+      if (resRuntime.ok) {
+        const rt = await resRuntime.json();
+        setRuntime(rt);
+      }
     } catch (e) {
-      console.error('Failed to load local models:', e);
+      console.error('Failed to load local models overview:', e);
     } finally {
       setLoading(false);
     }
@@ -55,6 +78,11 @@ export const LocalModelsTab: React.FC = () => {
         const data = await res.json();
         setOverview(data);
         soundEffects.playCompletionPing();
+      }
+      const resRuntime = await fetch('/api/models/runtime');
+      if (resRuntime.ok) {
+        const rt = await resRuntime.json();
+        setRuntime(rt);
       }
     } catch (e) {
       console.error(e);
@@ -79,6 +107,48 @@ export const LocalModelsTab: React.FC = () => {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleLoadToRam = async (category?: string, filename?: string) => {
+    setLoadingRam(true);
+    try {
+      const cat = category || activeCategory;
+      const targetFilename = filename || overview?.categories[cat]?.activeModel;
+      const res = await fetch('/api/models/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: cat, filename: targetFilename })
+      });
+      const data = await res.json();
+      if (data.success && data.runtime) {
+        setRuntime(data.runtime);
+        soundEffects.playCompletionPing();
+      } else {
+        alert(data.error || 'Ошибка загрузки в ОЗУ');
+        soundEffects.playWarningCue();
+      }
+    } catch (e) {
+      console.error('Load to RAM error:', e);
+      soundEffects.playWarningCue();
+    } finally {
+      setLoadingRam(false);
+    }
+  };
+
+  const handleUnloadFromRam = async () => {
+    setLoadingRam(true);
+    try {
+      const res = await fetch('/api/models/unload', { method: 'POST' });
+      const data = await res.json();
+      if (data.success && data.runtime) {
+        setRuntime(data.runtime);
+        soundEffects.playCompletionPing();
+      }
+    } catch (e) {
+      console.error('Unload from RAM error:', e);
+    } finally {
+      setLoadingRam(false);
     }
   };
 
@@ -132,6 +202,68 @@ export const LocalModelsTab: React.FC = () => {
 
   return (
     <div className="space-y-4">
+      {/* RAM Runtime Banner */}
+      <div
+        className="p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+        style={{
+          backgroundColor: runtime?.loaded ? 'var(--c-peach-surface)' : 'var(--c-bg-secondary)',
+          borderColor: runtime?.loaded ? 'var(--c-peach-border)' : 'var(--c-border)'
+        }}
+      >
+        <div className="flex items-center gap-3">
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border"
+            style={{
+              backgroundColor: runtime?.loaded ? 'var(--c-bg-primary)' : 'var(--c-bg-tertiary)',
+              borderColor: runtime?.loaded ? 'var(--c-peach-border)' : 'var(--c-border)',
+              color: runtime?.loaded ? 'var(--c-peach-light)' : 'var(--c-text-muted)'
+            }}
+          >
+            <Cpu className="w-5 h-5" />
+          </div>
+
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold" style={{ color: 'var(--c-text)' }}>
+                {runtime?.loaded ? 'Модель загружена в ОЗУ' : 'Модель не загружена в ОЗУ'}
+              </span>
+              <Badge variant={runtime?.loaded ? 'peach' : 'neutral'} size="sm">
+                {runtime?.loaded ? runtime.ramUsageFormatted : '0 MB'}
+              </Badge>
+            </div>
+            <div className="text-[11px] font-mono text-[var(--c-text-muted)]">
+              {runtime?.loaded
+                ? `${runtime.loadedModel} (${runtime.loadedCategory})`
+                : 'Загружается автоматически при запросе или вручную по кнопке'}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          {runtime?.loaded ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleUnloadFromRam}
+              disabled={loadingRam}
+              icon={<PowerOff className="w-3.5 h-3.5 text-rose-400" />}
+            >
+              {loadingRam ? 'Выгрузка...' : 'Выгрузить из ОЗУ'}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => handleLoadToRam()}
+              disabled={loadingRam || !overview?.categories[activeCategory]?.activeModel}
+              icon={<Zap className={`w-3.5 h-3.5 ${loadingRam ? 'animate-spin' : ''}`} />}
+            >
+              {loadingRam ? 'Загрузка...' : 'Загрузить в ОЗУ'}
+            </Button>
+          )}
+        </div>
+      </div>
+
       {/* Action Header */}
       <div className="flex items-center justify-between pb-2 border-b border-[var(--c-border)]">
         <div className="flex items-center gap-2">
@@ -203,6 +335,7 @@ export const LocalModelsTab: React.FC = () => {
           ) : (
             currentCategoryInfo.files.map(file => {
               const isActive = file.isActive;
+              const isLoadedInRam = runtime?.loaded && runtime.loadedModel === file.filename;
 
               return (
                 <div
@@ -228,7 +361,7 @@ export const LocalModelsTab: React.FC = () => {
                     </div>
 
                     <div className="space-y-0.5">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-medium font-mono" style={{ color: 'var(--c-text)' }}>
                           {file.filename}
                         </span>
@@ -245,6 +378,11 @@ export const LocalModelsTab: React.FC = () => {
                             {file.parameters}
                           </Badge>
                         )}
+                        {isLoadedInRam && (
+                          <Badge variant="peach" size="sm" className="animate-pulse">
+                            В ОЗУ
+                          </Badge>
+                        )}
                       </div>
 
                       <div className="text-[11px] font-mono text-[var(--c-text-muted)]">
@@ -253,22 +391,42 @@ export const LocalModelsTab: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Selection Checkmark: Green/Peach when selected, gray when not */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSelectModel(currentCategoryInfo.key, file.filename);
-                    }}
-                    className={`w-7 h-7 rounded-full flex items-center justify-center border transition-all ${
-                      isActive
-                        ? 'bg-[var(--c-peach-surface)] border-[var(--c-peach)] text-[var(--c-peach-light)]'
-                        : 'border-[var(--c-border)] text-zinc-600 hover:text-zinc-400 hover:border-zinc-500'
-                    }`}
-                    title={isActive ? 'Модель активна' : 'Выбрать модель'}
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {isActive && (
+                      <Button
+                        size="sm"
+                        variant={isLoadedInRam ? 'outline' : 'primary'}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isLoadedInRam) {
+                            handleUnloadFromRam();
+                          } else {
+                            handleLoadToRam(currentCategoryInfo.key, file.filename);
+                          }
+                        }}
+                        disabled={loadingRam}
+                      >
+                        {isLoadedInRam ? 'Выгрузить' : 'В ОЗУ'}
+                      </Button>
+                    )}
+
+                    {/* Selection Checkmark */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectModel(currentCategoryInfo.key, file.filename);
+                      }}
+                      className={`w-7 h-7 rounded-full flex items-center justify-center border transition-all ${
+                        isActive
+                          ? 'bg-[var(--c-peach-surface)] border-[var(--c-peach)] text-[var(--c-peach-light)]'
+                          : 'border-[var(--c-border)] text-zinc-600 hover:text-zinc-400 hover:border-zinc-500'
+                      }`}
+                      title={isActive ? 'Модель активна' : 'Выбрать модель'}
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               );
             })

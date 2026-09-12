@@ -204,7 +204,6 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               });
               soundEffects.playToolCallCue();
             } else if (event === 'completed') {
-              setResultData(data);
               receivedFinal = true;
               soundEffects.playCompletionPing();
               if (data.view && onSpawnView) {
@@ -213,8 +212,10 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               if (data.views && Array.isArray(data.views) && onSpawnView) {
                 data.views.forEach((v: ViewSpec) => onSpawnView(v));
               }
+              // Clear prompt on successful tool execution into view
+              setPrompt('');
             } else if (event === 'no_tool') {
-              setResultData({ success: false, rawResponse: data.message });
+              setErrorData(data.message || 'Модель не смогла подобрать инструмент для этого запроса.');
               receivedFinal = true;
               soundEffects.playWarningCue();
             } else if (event === 'error') {
@@ -228,13 +229,14 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
 
       if (!receivedFinal) {
         const fallbackRes = await onExecuteQuery(trimmed);
-        setResultData(fallbackRes);
         soundEffects.playCompletionPing();
         if (fallbackRes?.view && onSpawnView) {
           onSpawnView(fallbackRes.view);
+          setPrompt('');
         }
         if (fallbackRes?.views && Array.isArray(fallbackRes.views) && onSpawnView) {
           fallbackRes.views.forEach((v: ViewSpec) => onSpawnView(v));
+          setPrompt('');
         }
       }
     } catch (err: any) {
@@ -602,51 +604,6 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
             >
               Настроить
             </button>
-          </div>
-        )}
-
-        {/* Result Area */}
-        {resultData && (
-          <div className="px-3 pb-3">
-            <div
-              className="p-3 rounded-xl border space-y-2.5 max-h-72 overflow-y-auto text-xs"
-              style={{
-                backgroundColor: 'rgba(26, 30, 40, 0.7)',
-                borderColor: 'var(--c-border)'
-              }}
-            >
-              {/* Positive header tag */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5" style={{ color: 'var(--c-peach)' }} />
-                  <span
-                    className="font-mono text-[11px] font-medium px-2 py-0.5 rounded-md"
-                    style={{
-                      backgroundColor: 'var(--c-peach-surface)',
-                      color: 'var(--c-peach-light)'
-                    }}
-                  >
-                    {resultData.toolCalled || 'Выполнено'}
-                  </span>
-                </div>
-                <span className="text-[10px]" style={{ color: 'var(--c-text-dim)' }}>
-                  {resultData.durationMs ? `${resultData.durationMs}ms` : ''}
-                </span>
-              </div>
-
-              {/* Formatted result content */}
-              <pre
-                className="p-2.5 rounded-lg font-mono text-[11px] leading-relaxed whitespace-pre-wrap select-text"
-                style={{
-                  backgroundColor: 'var(--c-bg-primary)',
-                  color: 'var(--c-text)'
-                }}
-              >
-                {typeof resultData.result === 'object'
-                  ? JSON.stringify(resultData.result, null, 2)
-                  : String(resultData.result || resultData.rawResponse || 'Готово')}
-              </pre>
-            </div>
           </div>
         )}
 

@@ -1,6 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
 import { modulesRegistry } from './modulesRegistry';
 import { modelRouterService, RouteDecision } from './modelRouter';
+import { localModelRuntime } from './localModelRuntime';
+import { localModelsManager } from './localModelsManager';
 import { ToolDefinition } from '../src/types';
 
 let geminiClient: GoogleGenAI | null = null;
@@ -16,7 +18,7 @@ export interface FunctionGemmaCallResult {
   toolName?: string;
   arguments?: Record<string, unknown>;
   rawResponse: string;
-  source: 'local_endpoint' | 'builtin_engine';
+  source: 'local_endpoint' | 'gemini_api' | 'local_runtime';
   modelIdent: string;
   routeDecision?: RouteDecision;
 }
@@ -50,9 +52,8 @@ class FunctionGemmaService {
     const callMatch = text.match(/call:([a-zA-Z0-9_]+)\s*(\{[\s\S]*?\})/);
     if (callMatch) {
       const toolName = callMatch[1];
-      let rawArgs = callMatch[2];
+      const rawArgs = callMatch[2];
       try {
-        // Fix non-standard json like {param="value"} or unquoted keys
         const jsonReady = rawArgs
           .replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*=/g, '$1"$2":')
           .replace(/:\s*'([^']*)'/g, ':"$1"');
@@ -104,7 +105,6 @@ class FunctionGemmaService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 4000);
 
-      // Support Ollama format or OpenAI-compatible format
       const isOllama = endpoint.includes('11434');
       const url = isOllama ? `${endpoint}/api/generate` : `${endpoint}/v1/chat/completions`;
 
@@ -155,202 +155,6 @@ ${toolsSchema}`;
     }
   }
 
-  // Built-in intelligent FunctionGemma simulator matching user intents to registered tool signatures
-  public async simulateFunctionGemma(
-    prompt: string,
-    activeTools: ToolDefinition[]
-  ): Promise<FunctionGemmaCallResult> {
-    const p = prompt.toLowerCase();
-
-    // 0. Time and Date (get_current_time)
-    if (
-      p.includes('врем') ||
-      p.includes('time') ||
-      p.includes('час') ||
-      p.includes('date') ||
-      p.includes('дат') ||
-      p.includes('день недели') ||
-      p.includes('секунд') ||
-      p.includes('clock') ||
-      p.includes('таймзон')
-    ) {
-      const tool = activeTools.find(t => t.name === 'get_current_time');
-      if (tool) {
-        return {
-          toolName: 'get_current_time',
-          arguments: { format: '24h', show_seconds: true },
-          rawResponse: '<start_of_turn>model\ncall:get_current_time{"format":"24h","show_seconds":true}<end_of_turn>',
-          source: 'builtin_engine',
-          modelIdent: 'FunctionGemma-7b (Engine)'
-        };
-      }
-    }
-
-    // 0.1 Math and Calculator (evaluate_math)
-    if (p.includes('посчитай') || p.includes('вычисли') || p.includes('сколько будет') || p.match(/\d+\s*[\+\-\*\/]\s*\d+/)) {
-      const tool = activeTools.find(t => t.name === 'evaluate_math');
-      if (tool) {
-        const mathMatch = prompt.match(/[\d+\-*/().^ \t]+/);
-        const expr = mathMatch ? mathMatch[0].trim() : '2 + 2';
-        return {
-          toolName: 'evaluate_math',
-          arguments: { expression: expr },
-          rawResponse: `<start_of_turn>model\ncall:evaluate_math{"expression":"${expr}"}<end_of_turn>`,
-          source: 'builtin_engine',
-          modelIdent: 'FunctionGemma-7b (Engine)'
-        };
-      }
-    }
-
-    // 1. Check system metrics
-    if (p.includes('cpu') || p.includes('процессор') || p.includes('памят') || p.includes('нагрузк') || p.includes('метрик') || p.includes('ram') || p.includes('системе')) {
-      const tool = activeTools.find(t => t.name === 'get_metrics');
-      if (tool) {
-        return {
-          toolName: 'get_metrics',
-          arguments: { include_memory_breakdown: true },
-          rawResponse: '<start_of_turn>model\ncall:get_metrics{"include_memory_breakdown":true}<end_of_turn>',
-          source: 'builtin_engine',
-          modelIdent: 'FunctionGemma-7b (Engine)'
-        };
-      }
-    }
-
-    // 2. Process management
-    if (p.includes('процесс') || p.includes('process') || p.includes('запущен') || p.includes('pid') || p.includes('kill')) {
-      const tool = activeTools.find(t => t.name === 'manage_processes');
-      if (tool) {
-        let filterName = '';
-        if (p.includes('хром') || p.includes('chrome')) filterName = 'chrome';
-        else if (p.includes('node')) filterName = 'node';
-        else if (p.includes('python')) filterName = 'python';
-
-        return {
-          toolName: 'manage_processes',
-          arguments: filterName ? { filter_name: filterName, limit: 5 } : { limit: 5 },
-          rawResponse: `<start_of_turn>model\ncall:manage_processes{${filterName ? `"filter_name":"${filterName}",` : ''}"limit":5}<end_of_turn>`,
-          source: 'builtin_engine',
-          modelIdent: 'FunctionGemma-7b (Engine)'
-        };
-      }
-    }
-
-    // 3. Clipboard
-    if (p.includes('буфер') || p.includes('clipboard') || p.includes('скопируй') || p.includes('вставь')) {
-      const tool = activeTools.find(t => t.name === 'clipboard');
-      if (tool) {
-        const isWrite = p.includes('скопируй') || p.includes('запиши') || p.includes('сохрани в буфер');
-        const contentMatch = prompt.match(/['"](.*)['"]/) || prompt.match(/(?:текст|буфер):\s*(.+)$/);
-        return {
-          toolName: 'clipboard',
-          arguments: isWrite ? { action: 'write', content: contentMatch ? contentMatch[1] : 'Привет из FunctionGemma' } : { action: 'read' },
-          rawResponse: `<start_of_turn>model\ncall:clipboard{"action":"${isWrite ? 'write' : 'read'}"}<end_of_turn>`,
-          source: 'builtin_engine',
-          modelIdent: 'FunctionGemma-7b (Engine)'
-        };
-      }
-    }
-
-    // 4. File search
-    if (p.includes('файл') || p.includes('найди файл') || p.includes('расширен') || p.includes('explorer') || p.includes('.ts') || p.includes('.json')) {
-      const tool = activeTools.find(t => t.name === 'file_explorer');
-      if (tool) {
-        let pattern = '*.ts';
-        if (p.includes('json')) pattern = '*.json';
-        else if (p.includes('tsx')) pattern = '*.tsx';
-        return {
-          toolName: 'file_explorer',
-          arguments: { pattern },
-          rawResponse: `<start_of_turn>model\ncall:file_explorer{"pattern":"${pattern}"}<end_of_turn>`,
-          source: 'builtin_engine',
-          modelIdent: 'FunctionGemma-7b (Engine)'
-        };
-      }
-    }
-
-    // 5. Notes search
-    if (p.includes('заметк') || p.includes('note') || p.includes('сниппет') || p.includes('напомни') || p.includes('памятк')) {
-      const tool = activeTools.find(t => t.name === 'find_notes');
-      if (tool) {
-        const words = prompt.replace(/[^\w\sа-яА-Я]/gi, '').split(/\s+/).filter(w => w.length > 3);
-        const keyword = words[words.length - 1] || 'gemma';
-        return {
-          toolName: 'find_notes',
-          arguments: { keyword },
-          rawResponse: `<start_of_turn>model\ncall:find_notes{"keyword":"${keyword}"}<end_of_turn>`,
-          source: 'builtin_engine',
-          modelIdent: 'FunctionGemma-7b (Engine)'
-        };
-      }
-    }
-
-    // 6. Shell command
-    if (p.includes('команд') || p.includes('terminal') || p.includes('терминал') || p.includes('shell') || p.includes('bash') || p.includes('uname') || p.includes('node -v') || p.includes('git status')) {
-      const tool = activeTools.find(t => t.name === 'run_command');
-      if (tool) {
-        let cmd = 'node -v';
-        if (p.includes('git')) cmd = 'git status';
-        else if (p.includes('uname') || p.includes('система')) cmd = 'uname -a';
-        else if (p.includes('date') || p.includes('время')) cmd = 'date';
-        return {
-          toolName: 'run_command',
-          arguments: { command: cmd },
-          rawResponse: `<start_of_turn>model\ncall:run_command{"command":"${cmd}"}<end_of_turn>`,
-          source: 'builtin_engine',
-          modelIdent: 'FunctionGemma-7b (Engine)'
-        };
-      }
-    }
-
-    // 7. Storage management
-    if (p.includes('storage') || p.includes('хранилищ') || p.includes('сохрани в файл') || p.includes('папк') || p.includes('директори')) {
-      const tool = activeTools.find(t => t.name === 'manage_storage');
-      if (tool) {
-        let action = 'info';
-        let filename = '';
-        if (p.includes('прочитай') || p.includes('открой')) {
-          action = 'read';
-          filename = 'notes.json';
-        } else if (p.includes('запиши') || p.includes('сохрани')) {
-          action = 'write';
-          filename = 'quick_note.txt';
-        }
-        return {
-          toolName: 'manage_storage',
-          arguments: filename ? { action, filename, content: 'Сохранено через FunctionGemma' } : { action: 'info' },
-          rawResponse: `<start_of_turn>model\ncall:manage_storage{"action":"${action}"${filename ? `,"filename":"${filename}"` : ''}}<end_of_turn>`,
-          source: 'builtin_engine',
-          modelIdent: 'FunctionGemma-7b (Engine)'
-        };
-      }
-    }
-
-    // 8. General search / web lookup
-    if (p.includes('найди') || p.includes('поищи') || p.includes('поиск') || p.includes('что такое') || p.includes('search') || p.includes('гугл') || p.includes('информац')) {
-      const tool = activeTools.find(t => t.name === 'web_lookup');
-      if (tool) {
-        const cleanQuery = prompt.replace(/^(найди|поищи|поиск|что такое|search|информация о|информацию о)\s+/i, '').trim();
-        return {
-          toolName: 'web_lookup',
-          arguments: { query: cleanQuery || prompt },
-          rawResponse: `<start_of_turn>model\ncall:web_lookup{"query":"${cleanQuery || prompt}"}<end_of_turn>`,
-          source: 'builtin_engine',
-          modelIdent: 'FunctionGemma-7b (Engine)'
-        };
-      }
-    }
-
-    // Default to web search tool or no match
-    const defaultTool = activeTools[0];
-    return {
-      toolName: defaultTool?.name,
-      arguments: { query: prompt },
-      rawResponse: `<start_of_turn>model\ncall:${defaultTool?.name || 'none'}{"query":"${prompt}"}<end_of_turn>`,
-      source: 'builtin_engine',
-      modelIdent: 'FunctionGemma-Local (Offline Engine)'
-    };
-  }
-
   public async callGemini(
     prompt: string,
     activeTools: ToolDefinition[]
@@ -384,18 +188,32 @@ ${toolsSchema}`;
           toolName: parsed.toolName,
           arguments: parsed.arguments,
           rawResponse: rawText,
-          source: 'local_endpoint',
+          source: 'gemini_api',
           modelIdent: 'Gemini 2.5 Flash'
         };
       }
       return null;
     } catch (err) {
-      console.warn('Gemini inference error, falling back to simulator:', err);
+      console.warn('[FunctionGemmaService] Gemini API inference error:', err);
       return null;
     }
   }
 
   public async inferAndCallTool(prompt: string): Promise<FunctionGemmaCallResult> {
+    // 1. Check/Auto-load base model if needed
+    const overview = localModelsManager.scanModels();
+    const baseModelFiles = overview.categories['basemodel']?.files || [];
+    
+    let loadedRuntime = localModelRuntime.getState();
+    if (!loadedRuntime.isLoaded && baseModelFiles.length > 0) {
+      try {
+        const activeName = localModelsManager.getActiveModel('basemodel') || baseModelFiles[0].filename;
+        loadedRuntime = await localModelRuntime.loadModel('basemodel', activeName);
+      } catch (err) {
+        console.warn('[FunctionGemmaService] Auto-load base model failed:', err);
+      }
+    }
+
     const routeDecision = modelRouterService.routeQuery(prompt);
     const assignedModules = routeDecision.selectedModel.moduleIds;
 
@@ -407,22 +225,26 @@ ${toolsSchema}`;
       }
     }
 
+    if (candidateTools.length === 0) {
+      throw new Error('Все зарегистрированные инструменты отключены в конфигурации.');
+    }
+
     const endpointToUse = routeDecision.selectedModel.endpoint;
     const endpointType = routeDecision.selectedModel.endpointType;
 
-    // 1. If local endpoint is set, try calling it
+    // 2. Try calling local LLM endpoint if configured
     if (endpointToUse && endpointType !== 'builtin_simulator') {
       const localRes = await this.callLocalEndpoint(endpointToUse, prompt, candidateTools);
       if (localRes && localRes.toolName) {
         return {
           ...localRes,
-          modelIdent: `${routeDecision.selectedModel.name} (Local)`,
+          modelIdent: `${routeDecision.selectedModel.name} (Local Endpoint)`,
           routeDecision
         };
       }
     }
 
-    // 2. If GEMINI_API_KEY is available, use Gemini
+    // 3. Try Gemini API if key is available
     if (process.env.GEMINI_API_KEY) {
       const geminiRes = await this.callGemini(prompt, candidateTools);
       if (geminiRes && geminiRes.toolName) {
@@ -433,13 +255,29 @@ ${toolsSchema}`;
       }
     }
 
-    // 3. Use built-in offline engine fallback
-    const simRes = await this.simulateFunctionGemma(prompt, candidateTools);
-    return {
-      ...simRes,
-      modelIdent: `${routeDecision.selectedModel.name} (Offline Engine)`,
-      routeDecision
-    };
+    // 4. If a local model is loaded in RAM
+    if (loadedRuntime.isLoaded && loadedRuntime.activeFilename) {
+      // Check if local endpoint is active or available
+      const localRes = await this.callLocalEndpoint('http://localhost:11434', prompt, candidateTools);
+      if (localRes && localRes.toolName) {
+        return {
+          ...localRes,
+          modelIdent: `${loadedRuntime.activeFilename} (Local RAM)`,
+          routeDecision
+        };
+      }
+    }
+
+    // 5. No mock data allowed: throw a clean, informative error
+    if (baseModelFiles.length === 0 && !process.env.GEMINI_API_KEY) {
+      throw new Error(
+        'Модель не загружена. В папке models/basemodel/ отсутствуют файлы моделей (.gguf, .safetensors, .bin). Поместите файл модели в папку models/basemodel/ или настройте подключение к локальному серверу/API.'
+      );
+    }
+
+    throw new Error(
+      `Модель "${loadedRuntime.activeFilename || 'FunctionGemma'}" не смогла обработать запрос. Убедитесь, что модель загружена в ОЗУ или запущен локальный сервер инференса.`
+    );
   }
 }
 
