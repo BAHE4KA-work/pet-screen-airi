@@ -1,0 +1,23 @@
+[
+  {
+    "id": "note_1",
+    "title": "Конфигурация FunctionGemma",
+    "content": "Локальная модель function calling с квантованием 4-bit и контекстом 4096 токенов.",
+    "tags": [
+      "gemma",
+      "local",
+      "config"
+    ],
+    "updatedAt": "2026-09-12T12:46:56.936Z"
+  },
+  {
+    "id": "note_2",
+    "title": "Список доверенных модулей",
+    "content": "Модули system, search, files, developer и storage зарегистрированы и верифицированы.",
+    "tags": [
+      "modules",
+      "security"
+    ],
+    "updatedAt": "2026-09-12T12:46:56.936Z"
+  }
+]

@@ -1,4 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
 import { modulesRegistry } from './modulesRegistry';
 import { modelRouterService, RouteDecision } from './modelRouter';
 import { ToolDefinition } from '../src/types';
@@ -7,20 +6,12 @@ export interface FunctionGemmaCallResult {
   toolName?: string;
   arguments?: Record<string, unknown>;
   rawResponse: string;
-  source: 'local_endpoint' | 'builtin_engine' | 'gemini_fallback';
+  source: 'local_endpoint' | 'builtin_engine';
   modelIdent: string;
   routeDecision?: RouteDecision;
 }
 
 class FunctionGemmaService {
-  private geminiClient: GoogleGenAI | null = null;
-
-  private getGeminiClient(): GoogleGenAI | null {
-    if (!this.geminiClient && process.env.GEMINI_API_KEY) {
-      this.geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    }
-    return this.geminiClient;
-  }
 
   public formatGemmaToolsSchema(tools: ToolDefinition[]): string {
     const schemas = tools.map(t => ({
@@ -339,35 +330,6 @@ ${toolsSchema}`;
       }
     }
 
-    // Fallback: Check Gemini API if configured
-    const client = this.getGeminiClient();
-    if (client) {
-      try {
-        const toolsDesc = activeTools.map(t => `- ${t.name}: ${t.description} (params: ${t.parameters.map(p => p.name).join(', ')})`).join('\n');
-        const response = await client.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: `You are simulating FunctionGemma. The user prompt is: "${prompt}".
-Select exactly ONE function from:
-${toolsDesc}
-
-Format output strictly as: call:function_name{"param": "value"}`
-        });
-        const text = response.text || '';
-        const parsed = this.parseGemmaResponse(text);
-        if (parsed.toolName) {
-          return {
-            toolName: parsed.toolName,
-            arguments: parsed.arguments,
-            rawResponse: text,
-            source: 'gemini_fallback',
-            modelIdent: 'FunctionGemma (Gemini Assisted)'
-          };
-        }
-      } catch {
-        // fallback to default
-      }
-    }
-
     // Default to web search tool or no match
     const defaultTool = activeTools[0];
     return {
@@ -375,7 +337,7 @@ Format output strictly as: call:function_name{"param": "value"}`
       arguments: { query: prompt },
       rawResponse: `<start_of_turn>model\ncall:${defaultTool?.name || 'none'}{"query":"${prompt}"}<end_of_turn>`,
       source: 'builtin_engine',
-      modelIdent: 'FunctionGemma-7b (Engine)'
+      modelIdent: 'FunctionGemma-Local (Offline Engine)'
     };
   }
 
@@ -406,11 +368,11 @@ Format output strictly as: call:function_name{"param": "value"}`
       }
     }
 
-    // 2. Use built-in simulation / fallback
+    // 2. Use built-in offline engine fallback
     const simRes = await this.simulateFunctionGemma(prompt, candidateTools);
     return {
       ...simRes,
-      modelIdent: `${routeDecision.selectedModel.name} (${simRes.source === 'gemini_fallback' ? 'Gemini' : 'Engine'})`,
+      modelIdent: `${routeDecision.selectedModel.name} (Offline Engine)`,
       routeDecision
     };
   }

@@ -14,15 +14,8 @@ services:
       - STORAGE_PATH=/app/storage
       - LOCAL_LLM_ENDPOINT=http://functiongemma-llm:11434
       - LOCAL_STT_ENDPOINT=http://stt-whisper:8000/v1/audio/transcriptions
-      - HTTP_PROXY=http://network-proxy:8080
-      - HTTPS_PROXY=http://network-proxy:8080
-      - ALL_PROXY=socks5://network-proxy:1080
     volumes:
       - app-storage:/app/storage
-    depends_on:
-      - functiongemma-llm
-      - stt-whisper
-      - network-proxy
     networks:
       - functiongemma-net
 

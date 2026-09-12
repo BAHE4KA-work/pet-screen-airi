@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Eye, EyeOff, Sparkles, Clock, Activity } from 'lucide-react';
+import { Settings, Eye, EyeOff, Sparkles, Clock, Activity, Maximize2, Minimize2, Monitor } from 'lucide-react';
 import { FloatingHud } from './components/FloatingHud';
 import { SettingsModal } from './components/SettingsModal';
 import { DesktopBackground } from './components/DesktopBackground';
@@ -19,6 +19,7 @@ import {
   ViewSpec
 } from './types';
 import { soundEffects } from './utils/audioEffects';
+import { electronBridge } from './utils/electronBridge';
 
 export default function App() {
   const [status, setStatus] = useState<ModelStatus | null>(null);
@@ -45,9 +46,35 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState('tools');
 
-  // Appearance preferences
-  const [desktopOpacity, setDesktopOpacity] = useState(0.85);
+  // Fullscreen and Real Overlay Preferences
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [desktopOpacity, setDesktopOpacity] = useState(0.4);
   const [showDesktop, setShowDesktop] = useState(true);
+  const [showSimulatedMockup, setShowSimulatedMockup] = useState(false);
+
+  // Fullscreen tracking
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
+
+  // Electron global hotkey listener
+  useEffect(() => {
+    electronBridge.onToggleHud(() => {
+      setHudVisible(prev => !prev);
+    });
+  }, []);
 
   // Views management
   const handleSpawnView = useCallback((newView: ViewSpec) => {
@@ -324,38 +351,55 @@ export default function App() {
       className="min-h-screen w-full relative overflow-hidden select-none workspace-surface"
     >
       {/* Soft desktop background preview */}
-      {showDesktop && <DesktopBackground opacity={desktopOpacity} />}
-
-      {/* Floating Single Draggable HUD Window */}
-      {hudVisible && (
-        <FloatingHud
-          status={status}
-          history={logs.map(l => l.prompt)}
-          isPinned={isHudPinned}
-          onTogglePin={() => setIsHudPinned(prev => !prev)}
-          onSpawnView={handleSpawnView}
-          onExecuteQuery={handleExecuteQuery}
-          onOpenSettings={openSettings}
-          onClose={() => setHudVisible(false)}
+      {showDesktop && (
+        <DesktopBackground
+          opacity={desktopOpacity}
+          showSimulatedMockup={showSimulatedMockup}
         />
       )}
 
+      {/* Floating Single Draggable HUD Window */}
+      {hudVisible && (
+        <div
+          onMouseEnter={() => electronBridge.setInteractive(true)}
+          onMouseLeave={() => electronBridge.setInteractive(false)}
+        >
+          <FloatingHud
+            status={status}
+            history={logs.map(l => l.prompt)}
+            isPinned={isHudPinned}
+            onTogglePin={() => setIsHudPinned(prev => !prev)}
+            onSpawnView={handleSpawnView}
+            onExecuteQuery={handleExecuteQuery}
+            onOpenSettings={openSettings}
+            onClose={() => setHudVisible(false)}
+          />
+        </div>
+      )}
+
       {/* Render all active Views (formalized overlay components with pinning) */}
-      {views.map(view => (
-        <ViewRenderer
-          key={view.id}
-          view={view}
-          onTogglePin={handleTogglePinView}
-          onClose={handleCloseView}
-          onPositionChange={handlePositionChange}
-        />
-      ))}
+      <div
+        onMouseEnter={() => electronBridge.setInteractive(true)}
+        onMouseLeave={() => electronBridge.setInteractive(false)}
+      >
+        {views.map(view => (
+          <ViewRenderer
+            key={view.id}
+            view={view}
+            onTogglePin={handleTogglePinView}
+            onClose={handleCloseView}
+            onPositionChange={handlePositionChange}
+          />
+        ))}
+      </div>
 
       {/* When HUD is hidden, subtle crossed-eye icon trigger to summon it (NO excess text) */}
       {!hudVisible && (
         <div className="fixed inset-0 z-30 flex items-center justify-center pointer-events-none">
           <button
             id="summon-hud-eye-btn"
+            onMouseEnter={() => electronBridge.setInteractive(true)}
+            onMouseLeave={() => electronBridge.setInteractive(false)}
             onClick={() => setHudVisible(true)}
             className="pointer-events-auto p-4 rounded-2xl border shadow-xl backdrop-blur-xl transition-all duration-300 hover:scale-105"
             style={{
@@ -374,12 +418,24 @@ export default function App() {
       <aside
         id="corner-dock-controls"
         onClick={e => e.stopPropagation()}
+        onMouseEnter={() => electronBridge.setInteractive(true)}
+        onMouseLeave={() => electronBridge.setInteractive(false)}
         className="fixed top-4 right-4 z-40 flex items-center gap-1.5 p-1.5 rounded-xl border shadow-lg backdrop-blur-xl transition-all"
         style={{
           backgroundColor: 'rgba(18, 21, 29, 0.8)',
           borderColor: 'var(--c-border)'
         }}
       >
+        {/* Fullscreen Toggle */}
+        <button
+          id="dock-fullscreen-btn"
+          onClick={toggleFullscreen}
+          className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
+          title={isFullscreen ? 'Выйти из полноэкранного режима' : 'Развернуть оверлей на весь экран (F11)'}
+        >
+          {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+        </button>
+
         {/* Quick standard View: Time */}
         <button
           id="dock-quick-time-btn"

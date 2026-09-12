@@ -161,7 +161,7 @@ export interface ModelStatus {
   loaded: boolean;
   modelName: string;
   endpoint: string;
-  endpointType: 'local_ollama' | 'local_vllm' | 'custom_endpoint' | 'builtin_simulator' | 'gemini_fallback';
+  endpointType: 'local_ollama' | 'local_vllm' | 'custom_endpoint' | 'builtin_simulator';
   isOnline: boolean;
   conflict: ChecksumConflict;
   ignoreConflict: boolean;
