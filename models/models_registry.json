@@ -1,10 +1,10 @@
 {
   "version": "1.0.0",
-  "updatedAt": "2026-09-12T14:00:00.000Z",
+  "updatedAt": "2026-09-12T15:00:22.611Z",
   "activeSelections": {
-    "basemodel": "functiongemma-7b-tools-v2.1.Q4_K_M.gguf.json",
-    "stt": "whisper-base-ru.bin.json",
-    "tts": "ru_RU-dmitri-medium.onnx.json",
-    "embedding": "bge-small-ru-v1.5.onnx.json"
+    "basemodel": "functiongemma-7b-tools-v2.1.Q4_K_M.gguf",
+    "stt": "whisper-base-ru.bin",
+    "tts": "ru_RU-dmitri-medium.onnx",
+    "embedding": "bge-small-ru-v1.5.onnx"
   }
 }

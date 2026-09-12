@@ -447,7 +447,7 @@ app.post('/api/models/local/select', (req, res) => {
 
   // If STT model changed, sync with sttService
   if (category === 'stt') {
-    sttService.setConfig({ model });
+    sttService.setConfig({ modelFile: model, model });
   }
 
   res.json({ success: true, ...result, overview: localModelsManager.scanModels() });

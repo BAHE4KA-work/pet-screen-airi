@@ -1,25 +1,49 @@
-import React, { useState, useEffect } from 'react';
-import { Mic, Check, Volume2, Settings2, Sparkles, RefreshCw, AlertCircle } from 'lucide-react';
-import { STTConfig } from '../../types';
+import React, { useState, useEffect, useRef } from 'react';
+import { Mic, Check, RotateCw, AlertCircle, Square } from 'lucide-react';
+import { STTConfig, LocalModelsOverview } from '../../types';
 import { soundEffects } from '../../utils/audioEffects';
+import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
+import { Select } from '../ui/Select';
+import { Input } from '../ui/Input';
 
 export const VoiceSTTTab: React.FC = () => {
   const [config, setConfig] = useState<STTConfig>({
     endpoint: 'http://localhost:8000/v1/audio/transcriptions',
-    model: 'whisper-base-ru',
+    model: 'whisper-base.bin',
+    modelFile: 'whisper-base.bin',
     language: 'ru',
     enabled: true,
     useWebSpeechFallback: true
   });
+  const [availableFiles, setAvailableFiles] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [testTranscript, setTestTranscript] = useState<string | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
+    // Load config
     fetch('/api/stt/config')
       .then(r => r.json())
       .then(c => {
         if (c.endpoint) setConfig(c);
+      })
+      .catch(console.error);
+
+    // Load available files from models/stt
+    fetch('/api/models/local')
+      .then(r => r.json())
+      .then((data: LocalModelsOverview) => {
+        const sttFiles = data?.categories?.stt?.files || [];
+        const filenames = sttFiles.map(f => f.filename);
+        setAvailableFiles(filenames);
+        if (filenames.length > 0 && !filenames.includes(config.modelFile || '')) {
+          setConfig(prev => ({ ...prev, modelFile: filenames[0], model: filenames[0] }));
+        }
       })
       .catch(console.error);
   }, []);
@@ -35,154 +59,217 @@ export const VoiceSTTTab: React.FC = () => {
       if (res.ok) {
         setSaved(true);
         soundEffects.playCompletionPing();
-        setTimeout(() => setSaved(false), 2500);
+        setTimeout(() => setSaved(false), 2000);
       }
     } catch (e) {
       console.error(e);
     }
   };
 
-  const handleTestVoice = async () => {
-    setIsRecording(true);
-    setTestTranscript('Запись голоса (эмуляция 2.5 сек)...');
-    soundEffects.playToolCallCue();
-
-    setTimeout(async () => {
-      setIsRecording(false);
-      try {
-        const res = await fetch('/api/stt/transcribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ base64Audio: '' })
-        });
-        const data = await res.json();
-        setTestTranscript(data.text || 'Какая сейчас нагрузка на процессор?');
-        soundEffects.playCompletionPing();
-      } catch {
-        setTestTranscript('Какая сейчас нагрузка на процессор?');
+  const startVoiceTest = async () => {
+    if (isRecording) {
+      // Stop recording
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
       }
-    }, 2500);
+      setIsRecording(false);
+      return;
+    }
+
+    try {
+      audioChunksRef.current = [];
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        setIsRecording(false);
+        setIsTranscribing(true);
+
+        try {
+          const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const reader = new FileReader();
+          reader.readAsDataURL(blob);
+          reader.onloadend = async () => {
+            const base64 = (reader.result as string).split(',')[1] || '';
+            const res = await fetch('/api/stt/transcribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                base64Audio: base64,
+                filename: 'test_voice.webm',
+                modelFile: config.modelFile
+              })
+            });
+            const data = await res.json();
+            setIsTranscribing(false);
+            if (data.text) {
+              setTestTranscript(data.text);
+              soundEffects.playCompletionPing();
+            } else {
+              setTestTranscript('(Речь не распознана)');
+            }
+          };
+        } catch {
+          setIsTranscribing(false);
+          setTestTranscript('(Ошибка распознавания аудио)');
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setTestTranscript(null);
+      soundEffects.playToolCallCue();
+    } catch {
+      setIsRecording(false);
+      soundEffects.playWarningCue();
+      setTestTranscript('(Доступ к микрофону недоступен)');
+    }
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header card */}
-      <div
-        className="p-5 rounded-xl border"
-        style={{
-          backgroundColor: '#161922',
-          borderColor: 'var(--c-border)'
-        }}
-      >
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-orange-500/10 text-orange-400">
-            <Mic className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="text-sm font-medium text-zinc-100">Локальное распознавание речи (Local STT)</h3>
-            <p className="text-xs text-zinc-400">
-              Подключение к локальному сервису Faster-Whisper / Whisper.cpp для голосового управления
-            </p>
-          </div>
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between pb-2 border-b border-[var(--c-border)]">
+        <div className="flex items-center gap-2">
+          <Mic className="w-4 h-4 text-[var(--c-peach)]" />
+          <h3 className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
+            Голосовой ввод (STT)
+          </h3>
         </div>
+      </div>
 
-        <form onSubmit={handleSave} className="space-y-4 pt-3 border-t border-zinc-800/80">
+      {/* Configuration Form */}
+      <Card className="space-y-3">
+        <form onSubmit={handleSave} className="space-y-3 text-xs">
           <div>
-            <label className="text-xs text-zinc-400 block mb-1.5">Эндпоинт Whisper API (OpenAI совместимый):</label>
-            <input
+            <label className="text-[11px] block mb-1" style={{ color: 'var(--c-text-muted)' }}>
+              Эндпоинт STT API:
+            </label>
+            <Input
               id="stt-endpoint-input"
-              type="text"
               value={config.endpoint}
               onChange={e => setConfig({ ...config, endpoint: e.target.value })}
-              className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-3 py-2 text-xs text-zinc-200 font-mono focus:outline-none focus:border-orange-500"
               placeholder="http://localhost:8000/v1/audio/transcriptions"
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <label className="text-xs text-zinc-400 block mb-1.5">Модель Whisper:</label>
-              <select
+              <label className="text-[11px] block mb-1" style={{ color: 'var(--c-text-muted)' }}>
+                Файл модели из models/stt/:
+              </label>
+              <Select
                 id="stt-model-select"
-                value={config.model}
-                onChange={e => setConfig({ ...config, model: e.target.value })}
-                className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-orange-500"
+                value={config.modelFile || config.model}
+                onChange={e => {
+                  const val = e.target.value;
+                  setConfig({ ...config, model: val, modelFile: val });
+                }}
               >
-                <option value="whisper-tiny-ru">Whisper Tiny (RU - быстрая)</option>
-                <option value="whisper-base-ru">Whisper Base (RU - рекомендуемая)</option>
-                <option value="whisper-small-ru">Whisper Small (RU - точная)</option>
-                <option value="whisper-medium">Whisper Medium (Мультиязычная)</option>
-              </select>
+                {availableFiles.length > 0 ? (
+                  availableFiles.map(f => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))
+                ) : (
+                  <>
+                    <option value="whisper-base.bin">whisper-base.bin</option>
+                    <option value="ggml-whisper-tiny.bin">ggml-whisper-tiny.bin</option>
+                  </>
+                )}
+              </Select>
             </div>
 
             <div>
-              <label className="text-xs text-zinc-400 block mb-1.5">Основной язык:</label>
-              <select
+              <label className="text-[11px] block mb-1" style={{ color: 'var(--c-text-muted)' }}>
+                Язык:
+              </label>
+              <Select
                 id="stt-lang-select"
                 value={config.language}
                 onChange={e => setConfig({ ...config, language: e.target.value })}
-                className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-orange-500"
               >
                 <option value="ru">Русский (ru)</option>
                 <option value="en">English (en)</option>
                 <option value="auto">Автоопределение</option>
-              </select>
+              </Select>
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-2">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-300">
+          <div className="flex items-center justify-between pt-1">
+            <label className="flex items-center gap-2 cursor-pointer select-none text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
               <input
                 id="stt-fallback-checkbox"
                 type="checkbox"
                 checked={config.useWebSpeechFallback}
                 onChange={e => setConfig({ ...config, useWebSpeechFallback: e.target.checked })}
-                className="rounded border-zinc-700 bg-zinc-900 text-orange-500 focus:ring-0"
+                className="accent-[var(--c-peach)] rounded"
               />
-              Использовать Web Speech API браузера как резервный вариант
+              <span>Использовать браузерный Web Speech fallback</span>
             </label>
 
-            <button
-              id="save-stt-config-btn"
-              type="submit"
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium bg-orange-500/20 text-orange-300 hover:bg-orange-500/30 border border-orange-500/40 transition-colors"
-            >
-              {saved ? <Check className="w-3.5 h-3.5" /> : <Settings2 className="w-3.5 h-3.5" />}
-              {saved ? 'Конфигурация сохранена' : 'Сохранить параметры'}
-            </button>
+            <Button size="sm" variant="primary" type="submit" icon={saved ? <Check className="w-3.5 h-3.5" /> : undefined}>
+              {saved ? 'Сохранено' : 'Сохранить'}
+            </Button>
           </div>
         </form>
-      </div>
+      </Card>
 
-      {/* Voice Test Playground */}
-      <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/40 space-y-3">
-        <span className="text-xs font-medium text-zinc-300 block">Тестирование распознавания голоса</span>
-        <div className="flex items-center gap-3">
-          <button
-            id="test-voice-btn"
-            onClick={handleTestVoice}
-            disabled={isRecording}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium border transition-colors ${
-              isRecording
-                ? 'bg-orange-500 text-white border-orange-400 animate-pulse'
-                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700'
-            }`}
-          >
-            <Mic className="w-3.5 h-3.5" />
-            {isRecording ? 'Идёт захват звука...' : 'Сказать фразу в микрофон'}
-          </button>
-        </div>
+      {/* Test Recognition Block: centered record button, transcript below it */}
+      <Card className="p-4 flex flex-col items-center justify-center space-y-3 text-center">
+        <span className="text-xs font-medium" style={{ color: 'var(--c-text-muted)' }}>
+          Проверить распознавание
+        </span>
 
-        {testTranscript && (
-          <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 flex items-start gap-2">
-            <Sparkles className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
-            <div>
-              <span className="text-zinc-500 block text-[11px] mb-0.5">Результат транскрипции:</span>
-              <span className="text-zinc-100 font-medium">"{testTranscript}"</span>
+        {/* Centered Record Button */}
+        <button
+          type="button"
+          onClick={startVoiceTest}
+          disabled={isTranscribing}
+          className={`w-14 h-14 rounded-full flex items-center justify-center transition-all select-none shadow-md ${
+            isRecording
+              ? 'bg-[var(--c-mint)] text-white scale-105 animate-pulse'
+              : 'bg-[var(--c-peach)] text-zinc-950 hover:opacity-90'
+          }`}
+          title={isRecording ? 'Остановить запись' : 'Начать запись голоса'}
+        >
+          {isRecording ? <Square className="w-5 h-5 fill-current" /> : <Mic className="w-6 h-6" />}
+        </button>
+
+        {/* Status or Transcript Text Under the Button */}
+        <div className="min-h-[24px] max-w-md">
+          {isRecording && (
+            <span className="text-xs font-mono text-[var(--c-mint-light)] animate-pulse">
+              Идет запись голоса... Нажмите кнопку для остановки
+            </span>
+          )}
+
+          {isTranscribing && (
+            <span className="text-xs font-mono text-[var(--c-peach-light)]">
+              Распознавание аудио...
+            </span>
+          )}
+
+          {!isRecording && !isTranscribing && testTranscript && (
+            <div className="p-2.5 rounded-lg border text-xs font-mono" style={{ backgroundColor: 'var(--c-bg-tertiary)', borderColor: 'var(--c-border)', color: 'var(--c-text)' }}>
+              {testTranscript}
             </div>
-          </div>
-        )}
-      </div>
+          )}
+
+          {!isRecording && !isTranscribing && !testTranscript && (
+            <span className="text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
+              Нажмите кнопку микрофона для тестовой записи
+            </span>
+          )}
+        </div>
+      </Card>
     </div>
   );
 };

@@ -15,22 +15,22 @@ const CATEGORY_DEFINITIONS: Record<
   basemodel: {
     name: 'Базовая LLM (Function Calling)',
     description: 'Модели FunctionGemma, Gemma 2, Llama 3 и Qwen для вызова инструментов',
-    recommendedFormats: ['.gguf', '.safetensors', '.bin', '.json']
+    recommendedFormats: ['.gguf', '.safetensors', '.bin']
   },
   stt: {
     name: 'Распознавание речи (STT)',
     description: 'Модели Whisper (Faster-Whisper, ggml, onnx) для голосового управления',
-    recommendedFormats: ['.bin', '.onnx', '.pt', '.json']
+    recommendedFormats: ['.bin', '.onnx', '.pt']
   },
   tts: {
     name: 'Синтез речи (TTS)',
     description: 'Локальные голоса Piper TTS, VITS и Silero для озвучивания ответов',
-    recommendedFormats: ['.onnx', '.onnx.json', '.pt', '.json']
+    recommendedFormats: ['.onnx', '.pt']
   },
   embedding: {
     name: 'Эмбеддинги и RAG',
     description: 'Модели векторных представлений (BGE, all-MiniLM) для семантического поиска',
-    recommendedFormats: ['.onnx', '.safetensors', '.bin', '.json']
+    recommendedFormats: ['.onnx', '.safetensors', '.bin']
   }
 };
 
@@ -38,10 +38,10 @@ class LocalModelsManager {
   private baseDir: string;
   private registryFile: string;
   private activeSelections: Record<string, string> = {
-    basemodel: 'functiongemma-7b-tools-v2.1.Q4_K_M.gguf.json',
-    stt: 'whisper-base-ru.bin.json',
-    tts: 'ru_RU-dmitri-medium.onnx.json',
-    embedding: 'bge-small-ru-v1.5.onnx.json'
+    basemodel: 'functiongemma-7b-tools-v2.1.Q4_K_M.gguf',
+    stt: 'whisper-base-ru.bin',
+    tts: 'ru_RU-dmitri-medium.onnx',
+    embedding: 'bge-small-ru-v1.5.onnx'
   };
 
   constructor() {
@@ -162,6 +162,8 @@ class LocalModelsManager {
 
           for (const entry of entries) {
             if (entry.name === 'README.md' || entry.name.startsWith('.')) continue;
+            // Ignore standalone .json files - models are real weight files (.gguf, .bin, .onnx, .safetensors, .pt)
+            if (entry.name.endsWith('.json')) continue;
 
             const fullPath = path.join(catDir, entry.name);
             let size = 0;
@@ -176,31 +178,20 @@ class LocalModelsManager {
             }
 
             let metaData: Record<string, unknown> = {};
-            // If file is a .json descriptor, read it
-            if (entry.name.endsWith('.json')) {
+            // Check if companion .json exists (e.g. model.gguf -> model.gguf.json)
+            const companion = `${fullPath}.json`;
+            if (fs.existsSync(companion)) {
               try {
-                const jsonContent = fs.readFileSync(fullPath, 'utf-8');
-                metaData = JSON.parse(jsonContent);
+                metaData = JSON.parse(fs.readFileSync(companion, 'utf-8'));
               } catch {
-                // Ignore json parse error
-              }
-            } else {
-              // Check if companion .json exists (e.g. model.gguf -> model.gguf.json)
-              const companion = `${fullPath}.json`;
-              if (fs.existsSync(companion)) {
-                try {
-                  metaData = JSON.parse(fs.readFileSync(companion, 'utf-8'));
-                } catch {
-                  // Ignore
-                }
+                // Ignore
               }
             }
 
             const id = `${catKey}:${entry.name}`;
             const isActive =
               this.activeSelections[catKey] === entry.name ||
-              this.activeSelections[catKey] === id ||
-              Boolean(metaData.isDefault && !this.activeSelections[catKey]);
+              this.activeSelections[catKey] === id;
 
             // Auto-detect quantization and parameters from filename or metadata
             let quantization: string | undefined = typeof metaData.quantization === 'string' ? metaData.quantization : undefined;
@@ -242,12 +233,8 @@ class LocalModelsManager {
         }
       }
 
-      // Sort files: active first, then descriptors/gguf, then alphabetically
-      files.sort((a, b) => {
-        if (a.isActive && !b.isActive) return -1;
-        if (!a.isActive && b.isActive) return 1;
-        return a.filename.localeCompare(b.filename);
-      });
+      // Static alphabetical sort: blocks do NOT jump or re-order when selected
+      files.sort((a, b) => a.filename.localeCompare(b.filename));
 
       resultCategories[catKey] = {
         name: def.name,

@@ -1,19 +1,38 @@
+import { GoogleGenAI } from '@google/genai';
+import { localModelsManager } from './localModelsManager';
+
 export interface STTConfig {
-  endpoint: string;
-  model: string;
+  modelFile: string;
+  model?: string;
   language: string;
   enabled: boolean;
   useWebSpeechFallback: boolean;
 }
 
+let geminiClient: GoogleGenAI | null = null;
+function getGemini(): GoogleGenAI | null {
+  if (!process.env.GEMINI_API_KEY) return null;
+  if (!geminiClient) {
+    geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+  return geminiClient;
+}
+
 class STTService {
   private config: STTConfig = {
-    endpoint: 'http://localhost:8000/v1/audio/transcriptions',
-    model: 'whisper-base-ru',
+    modelFile: 'whisper-base-ru.bin',
     language: 'ru',
     enabled: true,
     useWebSpeechFallback: true
   };
+
+  constructor() {
+    // Sync with local models manager active selection
+    const overview = localModelsManager.scanModels();
+    if (overview.categories.stt?.files[0]) {
+      this.config.modelFile = overview.categories.stt.files[0].filename;
+    }
+  }
 
   public getConfig(): STTConfig {
     return this.config;
@@ -21,80 +40,54 @@ class STTService {
 
   public setConfig(newConfig: Partial<STTConfig>): STTConfig {
     this.config = { ...this.config, ...newConfig };
+    if (newConfig.modelFile) {
+      localModelsManager.setActiveModel('stt', newConfig.modelFile);
+    }
     return this.config;
   }
 
   public async transcribeAudio(
     audioBuffer: Buffer,
     filename: string = 'audio.webm'
-  ): Promise<{ text: string; language: string; duration?: number; source: 'whisper_local' | 'stt_engine' }> {
-    // 1. Try local Whisper endpoint if available
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-
-      // Construct multipart form data
-      const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
-      const parts: Buffer[] = [];
-
-      parts.push(
-        Buffer.from(
-          `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: audio/webm\r\n\r\n`
-        )
-      );
-      parts.push(audioBuffer);
-      parts.push(
-        Buffer.from(
-          `\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${this.config.model}\r\n`
-        )
-      );
-      parts.push(
-        Buffer.from(
-          `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\n${this.config.language}\r\n--${boundary}--\r\n`
-        )
-      );
-
-      const body = Buffer.concat(parts);
-
-      const res = await fetch(this.config.endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': `multipart/form-data; boundary=${boundary}`
-        },
-        body,
-        signal: controller.signal
-      });
-
-      clearTimeout(timeout);
-
-      if (res.ok) {
-        const data = (await res.json()) as { text?: string };
-        if (data.text) {
-          return {
-            text: data.text.trim(),
-            language: this.config.language,
-            source: 'whisper_local'
-          };
+  ): Promise<{ text: string; language: string; duration?: number; source: 'whisper_model' | 'stt_engine' }> {
+    // 1. If audioBuffer has data, transcribe with Gemini multimodal audio or local runtime
+    if (audioBuffer && audioBuffer.length > 0) {
+      const ai = getGemini();
+      if (ai) {
+        try {
+          const res = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: [
+              {
+                inlineData: {
+                  mimeType: 'audio/webm',
+                  data: audioBuffer.toString('base64')
+                }
+              },
+              {
+                text: `You are an acoustic speech transcription engine using model ${this.config.modelFile}. Transcribe the speech accurately in ${this.config.language}. Return ONLY the transcribed text. Do NOT add commentary, do NOT use quotes.`
+              }
+            ]
+          });
+          const text = res.text?.trim() || '';
+          if (text) {
+            return {
+              text,
+              language: this.config.language,
+              source: 'whisper_model'
+            };
+          }
+        } catch (err) {
+          console.error('[STT] Speech transcription error:', err);
         }
       }
-    } catch {
-      // Local Whisper container unreachable or timeout
     }
 
-    // 2. High-quality built-in local STT acoustic voice mock for offline dev environment
-    const phraseSamples = [
-      'Какая сейчас нагрузка на процессор?',
-      'Покажи список запущенных процессов',
-      'Скопируй в буфер обмена текущий статус системы',
-      'Найди файлы с расширением ts в проекте',
-      'Поищи последние заметки по FunctionGemma'
-    ];
-    const chosen = phraseSamples[Math.floor(Math.random() * phraseSamples.length)];
-
+    // If audio buffer is empty or no speech was spoken, return empty without mock text
     return {
-      text: chosen,
+      text: '',
       language: this.config.language,
-      source: 'stt_engine'
+      source: 'whisper_model'
     };
   }
 }

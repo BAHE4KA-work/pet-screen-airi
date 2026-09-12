@@ -169,15 +169,45 @@ export async function execute(params, context) {
     ],
     code: `// modules/system/manage_processes.js
 export async function execute(params, context) {
-  const sampleProcesses = [
-    { pid: 1042, name: 'functiongemma-runner', cpuPercent: 12.4, memMb: 1420, user: 'local' },
-    { pid: 2130, name: 'code-editor-service', cpuPercent: 3.2, memMb: 650, user: 'local' },
-    { pid: 3411, name: 'node-dev-server', cpuPercent: 1.8, memMb: 240, user: 'local' },
-    { pid: 4892, name: 'chrome-browser', cpuPercent: 8.5, memMb: 1120, user: 'local' },
-    { pid: 5120, name: 'system-audio-pipe', cpuPercent: 0.4, memMb: 45, user: 'system' }
-  ];
+  let processes = [];
+  try {
+    const cp = context.childProcess || require('child_process');
+    const isWin = process.platform === 'win32';
+    if (isWin) {
+      const output = cp.execSync('tasklist /fo csv /nh', { encoding: 'utf-8', timeout: 2500 });
+      const lines = output.trim().split('\\n');
+      processes = lines.map(line => {
+        const parts = line.split(',').map(p => p.replace(/^"|"$/g, '').trim());
+        const memKb = parseInt(parts[4]?.replace(/[^0-9]/g, '') || '0', 10);
+        return {
+          pid: parseInt(parts[1], 10) || 0,
+          name: parts[0] || 'unknown',
+          cpuPercent: 0,
+          memMb: Math.round(memKb / 1024),
+          user: 'current'
+        };
+      }).filter(p => p.pid > 0);
+    } else {
+      const output = cp.execSync('ps -eo pid,%cpu,%mem,comm --sort=-%cpu', { encoding: 'utf-8', timeout: 2500 });
+      const lines = output.trim().split('\\n').slice(1);
+      processes = lines.map(line => {
+        const parts = line.trim().split(/\\s+/);
+        return {
+          pid: parseInt(parts[0], 10) || 0,
+          name: parts[3] || 'unknown',
+          cpuPercent: parseFloat(parts[1]) || 0,
+          memMb: Math.round((parseFloat(parts[2]) || 0) * 16),
+          user: 'local'
+        };
+      }).filter(p => p.pid > 0);
+    }
+  } catch (err) {
+    processes = [
+      { pid: process.pid, name: 'node', cpuPercent: 1.2, memMb: Math.round(process.memoryUsage().rss / (1024 * 1024)), user: 'app' }
+    ];
+  }
 
-  let list = sampleProcesses;
+  let list = processes;
   if (params.filter_name) {
     const f = params.filter_name.toLowerCase();
     list = list.filter(p => p.name.toLowerCase().includes(f));

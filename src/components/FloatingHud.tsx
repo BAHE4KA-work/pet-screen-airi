@@ -297,9 +297,9 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
                 soundEffects.playCompletionPing();
                 inputRef.current?.focus();
               }
-            } catch {
-              setPrompt('Какая сейчас нагрузка на процессор?');
-              soundEffects.playCompletionPing();
+            } catch (err) {
+              console.error('STT error:', err);
+              soundEffects.playWarningCue();
             }
           };
         };
@@ -308,28 +308,12 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         setIsRecording(true);
         soundEffects.playToolCallCue();
       } else {
-        // Fallback for browsers with restricted mic permissions in iframe
-        setIsRecording(true);
-        setTimeout(async () => {
-          setIsRecording(false);
-          try {
-            const res = await fetch('/api/stt/transcribe', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ base64Audio: '' })
-            });
-            const data = await res.json();
-            setPrompt(data.text || 'Какая сейчас нагрузка на процессор?');
-            soundEffects.playCompletionPing();
-          } catch {
-            setPrompt('Какая сейчас нагрузка на процессор?');
-          }
-        }, 1800);
+        soundEffects.playWarningCue();
       }
-    } catch {
+    } catch (err) {
       setIsRecording(false);
-      setPrompt('Какая сейчас нагрузка на процессор?');
-      soundEffects.playCompletionPing();
+      console.error('Audio capture error:', err);
+      soundEffects.playWarningCue();
     }
   };
 

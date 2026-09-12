@@ -8,24 +8,21 @@ import {
   Palette,
   Info,
   RotateCw,
-  Power,
-  Sliders,
-  CheckCircle2,
-  AlertCircle,
-  Download,
   Plus,
   Trash2,
   Save,
   FileCode,
-  FileSpreadsheet,
   Layers,
   Sparkles,
-  Command,
   HardDrive,
   Network,
   Mic,
-  Box,
-  Volume2
+  Globe,
+  Volume2,
+  CheckCircle2,
+  Cpu,
+  Keyboard,
+  Check
 } from 'lucide-react';
 import {
   ModelStatus,
@@ -39,9 +36,15 @@ import { FineTuningExportModal } from './settings/FineTuningExportModal';
 import { StorageSettingsTab } from './settings/StorageSettingsTab';
 import { ModelRouterTab } from './settings/ModelRouterTab';
 import { VoiceSTTTab } from './settings/VoiceSTTTab';
-import { DockerDeployTab } from './settings/DockerDeployTab';
+import { NetworkSettingsTab } from './settings/NetworkSettingsTab';
 import { LocalModelsTab } from './settings/LocalModelsTab';
+import { HotkeysTab } from './settings/HotkeysTab';
 import { soundEffects } from '../utils/audioEffects';
+import { themeManager, AVAILABLE_PALETTES } from '../utils/themeManager';
+import { Button } from './ui/Button';
+import { Badge } from './ui/Badge';
+import { Card } from './ui/Card';
+import { Input } from './ui/Input';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -124,7 +127,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Fine-tuning dataset modal state
   const [showDatasetModal, setShowDatasetModal] = useState(false);
 
-  React.useEffect(() => {
+  // Theme states
+  const [primaryPalette, setPrimaryPaletteState] = useState<string>(() => themeManager.getPrimaryId());
+  const [secondaryPalette, setSecondaryPaletteState] = useState<string>(() => themeManager.getSecondaryId());
+
+  useEffect(() => {
     if (currentTool) {
       setEditingCode(currentTool.code);
       setEditingVersion(currentTool.version);
@@ -150,11 +157,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: 'local_models', label: 'Каталог моделей', icon: Layers },
     { id: 'storage', label: 'Хранилище', icon: HardDrive },
     { id: 'routing', label: 'Маршрутизация', icon: Network },
-    { id: 'voice', label: 'Голос (STT)', icon: Mic },
+    { id: 'voice', label: 'Голосовой ввод (STT)', icon: Mic },
     { id: 'compatibility', label: 'Совместимость', icon: ShieldCheck, badge: hasConflict && !isIgnored },
-    { id: 'history', label: 'История и аналитика', icon: History },
-    { id: 'docker', label: 'Docker & Сеть', icon: Box },
-    { id: 'appearance', label: 'Оформление & Звук', icon: Palette },
+    { id: 'history', label: 'История', icon: History },
+    { id: 'network', label: 'Сеть', icon: Globe },
+    { id: 'appearance', label: 'Оформление', icon: Palette },
+    { id: 'hotkeys', label: 'Горячие клавиши', icon: Keyboard },
     { id: 'about', label: 'О приложении', icon: Info }
   ];
 
@@ -199,13 +207,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setNewToolDesc('');
   };
 
+  const handleSelectPrimaryPalette = (id: string) => {
+    themeManager.setPrimaryPalette(id);
+    setPrimaryPaletteState(id);
+    soundEffects.playCompletionPing();
+  };
+
+  const handleSelectSecondaryPalette = (id: string) => {
+    themeManager.setSecondaryPalette(id);
+    setSecondaryPaletteState(id);
+    soundEffects.playCompletionPing();
+  };
+
   return (
     <div
       data-interactive="true"
       onMouseEnter={() => electronBridge.setInteractive(true)}
       className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-md animate-fade-in"
     >
-      {/* Settings Window Frame (Apple-inspired rounded-2xl with clean hierarchy) */}
+      {/* Settings Window Frame */}
       <div
         id="settings-modal-window"
         data-interactive="true"
@@ -213,8 +233,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         className="relative w-full max-w-4xl h-[640px] max-h-[90vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden text-sm"
         style={{
           backgroundColor: 'var(--c-bg-secondary)',
-          borderColor: 'var(--c-border)',
-          boxShadow: '0 30px 60px -15px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.06)'
+          borderColor: 'var(--c-border)'
         }}
       >
         {/* Titlebar */}
@@ -225,13 +244,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             borderColor: 'var(--c-border)'
           }}
         >
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-xs tracking-wide" style={{ color: 'var(--c-text)' }}>
-              Настройки
-            </span>
-          </div>
+          <span className="font-medium text-xs tracking-wide" style={{ color: 'var(--c-text)' }}>
+            Настройки
+          </span>
 
-          {/* Close button with subtle neutral styling */}
           <button
             id="settings-close-x-btn"
             onClick={onClose}
@@ -246,7 +262,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div className="flex-1 flex overflow-hidden">
           {/* Sidebar Navigation */}
           <div
-            className="w-48 sm:w-56 border-r p-2.5 flex flex-col gap-1 shrink-0 select-none overflow-y-auto"
+            className="w-48 sm:w-56 border-r p-2 flex flex-col gap-1 shrink-0 select-none overflow-y-auto"
             style={{
               backgroundColor: 'rgba(10, 12, 16, 0.4)',
               borderColor: 'var(--c-border)'
@@ -271,11 +287,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <Icon
                       className="w-4 h-4 transition-colors shrink-0"
                       style={{
-                        // Icon rule: strictly neutral text color when inactive, context shade ONLY when active
                         color: isActive ? 'var(--c-peach)' : 'var(--c-text-muted)'
                       }}
                     />
-                    <span>{tab.label}</span>
+                    <span className="truncate">{tab.label}</span>
                   </div>
 
                   {tab.badge && (
@@ -298,62 +313,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* 1. TOOLS TAB */}
             {activeTab === 'tools' && (
               <div className="space-y-4 max-w-3xl">
-                <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                  <div>
-                    <h3 className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
-                      Инструменты и скрипты
-                    </h3>
-                    <p className="text-xs mt-0.5" style={{ color: 'var(--c-text-muted)' }}>
-                      Каждый инструмент привязан к файлу модуля. Любое изменение кода сразу обновляет сигнатуру.
-                    </p>
-                  </div>
+                <div className="flex items-center justify-between pb-2 border-b border-[var(--c-border)]">
+                  <h3 className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
+                    Инструменты
+                  </h3>
 
                   <div className="flex items-center gap-2">
-                    <button
+                    {/* Compact JSON Button with standard height */}
+                    <Button
                       id="export-finetuning-dataset-btn"
+                      size="md"
+                      variant="secondary"
                       onClick={() => setShowDatasetModal(true)}
-                      className="px-3 py-1.5 rounded-lg border text-xs flex items-center gap-1.5 transition-all font-medium"
-                      style={{
-                        backgroundColor: 'var(--c-peach-surface)',
-                        color: 'var(--c-peach-light)',
-                        border: '1px solid var(--c-peach-border)'
-                      }}
-                      title="Собрать JSON-объект всех инструментов для дообучения модели"
+                      icon={<FileCode className="w-3.5 h-3.5" />}
                     >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>JSON для дообучения</span>
-                    </button>
+                      JSON
+                    </Button>
 
-                    <button
+                    <Button
+                      size="md"
+                      variant="secondary"
                       onClick={onReloadModules}
-                      className="p-2 rounded-lg border text-xs flex items-center gap-1.5 transition-colors text-[var(--c-text-muted)] hover:text-[var(--c-text)]"
-                      style={{
-                        backgroundColor: 'var(--c-bg-secondary)',
-                        borderColor: 'var(--c-border)'
-                      }}
-                      title="Перезагрузить скрипты"
+                      icon={<RotateCw className="w-3.5 h-3.5" />}
                     >
-                      <RotateCw className="w-3.5 h-3.5" />
-                    </button>
+                      Обновить
+                    </Button>
 
-                    <button
+                    <Button
+                      size="md"
+                      variant="primary"
                       onClick={() => setShowNewToolModal(true)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all"
-                      style={{
-                        backgroundColor: 'var(--c-peach-surface)',
-                        color: 'var(--c-peach-light)',
-                        border: '1px solid var(--c-peach-border)'
-                      }}
+                      icon={<Plus className="w-3.5 h-3.5" />}
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Добавить</span>
-                    </button>
+                      Добавить
+                    </Button>
                   </div>
                 </div>
 
-                {/* Master Detail Layout */}
+                {/* Vertical Layout for Tools */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {/* Left list of tools */}
+                  {/* Left: Vertical list of tools without description */}
                   <div className="space-y-1.5 max-h-96 overflow-y-auto pr-1">
                     {tools.map(tool => {
                       const isSelected = tool.id === selectedToolId;
@@ -361,20 +360,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <button
                           key={tool.id}
                           onClick={() => setSelectedToolId(tool.id)}
-                          className="w-full text-left p-2.5 rounded-xl border transition-all text-xs flex flex-col gap-0.5"
+                          className="w-full text-left px-3 py-2.5 rounded-xl border transition-all text-xs flex items-center justify-between"
                           style={{
                             backgroundColor: isSelected ? 'var(--c-peach-surface)' : 'var(--c-bg-secondary)',
                             borderColor: isSelected ? 'var(--c-peach-border)' : 'var(--c-border)',
                             color: isSelected ? 'var(--c-peach-light)' : 'var(--c-text)'
                           }}
                         >
-                          <div className="flex items-center justify-between font-mono">
-                            <span className="font-semibold">{tool.name}</span>
-                            <span className="text-[10px] opacity-75">v{tool.version}</span>
-                          </div>
-                          <span className="text-[11px] truncate" style={{ color: 'var(--c-text-muted)' }}>
-                            {tool.description}
-                          </span>
+                          <span className="font-mono font-medium truncate">{tool.name}</span>
+                          <Badge variant={isSelected ? 'peach' : 'neutral'} size="sm">
+                            v{tool.version}
+                          </Badge>
                         </button>
                       );
                     })}
@@ -382,13 +378,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                   {/* Right editor for selected tool */}
                   {currentTool && (
-                    <div
-                      className="md:col-span-2 p-3.5 rounded-xl border flex flex-col justify-between space-y-3"
-                      style={{
-                        backgroundColor: 'var(--c-bg-secondary)',
-                        borderColor: 'var(--c-border)'
-                      }}
-                    >
+                    <Card className="md:col-span-2 flex flex-col justify-between space-y-3">
                       <div className="space-y-2.5">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 font-mono text-xs">
@@ -398,44 +388,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             </span>
                           </div>
 
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => onDeleteTool(currentTool.id)}
-                              className="p-1.5 rounded-lg text-xs hover:bg-white/5 transition-colors"
-                              style={{ color: 'var(--c-mint-light)' }}
-                              title="Удалить инструмент"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onDeleteTool(currentTool.id)}
+                            icon={<Trash2 className="w-3.5 h-3.5 text-[var(--c-mint-light)]" />}
+                          />
                         </div>
 
-                        {/* Version and Description */}
-                        <div className="grid grid-cols-3 gap-2 text-xs">
-                          <div>
-                            <label className="text-[11px] block mb-1" style={{ color: 'var(--c-text-muted)' }}>
-                              Версия
-                            </label>
-                            <input
-                              type="text"
-                              value={editingVersion}
-                              onChange={e => setEditingVersion(e.target.value)}
-                              className="w-full px-2.5 py-1 rounded-lg border font-mono text-xs bg-transparent"
-                              style={{ borderColor: 'var(--c-border)', color: 'var(--c-text)' }}
-                            />
-                          </div>
-                          <div className="col-span-2">
-                            <label className="text-[11px] block mb-1" style={{ color: 'var(--c-text-muted)' }}>
-                              Описание для FunctionGemma
-                            </label>
-                            <input
-                              type="text"
-                              value={editingDesc}
-                              onChange={e => setEditingDesc(e.target.value)}
-                              className="w-full px-2.5 py-1 rounded-lg border text-xs bg-transparent"
-                              style={{ borderColor: 'var(--c-border)', color: 'var(--c-text)' }}
-                            />
-                          </div>
+                        {/* Version input */}
+                        <div className="text-xs">
+                          <label className="text-[11px] block mb-1" style={{ color: 'var(--c-text-muted)' }}>
+                            Версия
+                          </label>
+                          <Input
+                            value={editingVersion}
+                            onChange={e => setEditingVersion(e.target.value)}
+                          />
                         </div>
 
                         {/* Code Editor */}
@@ -447,7 +416,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             value={editingCode}
                             onChange={e => setEditingCode(e.target.value)}
                             rows={8}
-                            className="w-full p-2.5 rounded-lg border font-mono text-xs leading-relaxed resize-none bg-black/40"
+                            className="w-full p-2.5 rounded-lg border font-mono text-xs leading-relaxed resize-none bg-black/40 outline-none focus:border-[var(--c-peach)]"
                             style={{ borderColor: 'var(--c-border)', color: 'var(--c-text)' }}
                           />
                         </div>
@@ -456,35 +425,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       {/* Bottom action bar */}
                       <div className="flex items-center justify-between pt-2 border-t border-white/5">
                         {saveStatusMsg ? (
-                          <span
-                            className="text-xs font-mono"
-                            style={{
-                              color: saveStatusMsg.includes('Ошибка')
-                                ? 'var(--c-mint-light)'
-                                : 'var(--c-peach-light)'
-                            }}
-                          >
+                          <span className="text-xs font-mono text-[var(--c-peach-light)]">
                             {saveStatusMsg}
                           </span>
                         ) : (
-                          <span className="text-[11px] font-mono text-[var(--c-text-dim)]">
+                          <span className="text-[11px] font-mono text-[var(--c-text-muted)]">
                             Хэш: {currentTool.hash}
                           </span>
                         )}
 
-                        <button
+                        <Button
+                          size="sm"
+                          variant="primary"
                           onClick={handleSaveToolChanges}
-                          className="px-3.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all"
-                          style={{
-                            backgroundColor: 'var(--c-peach)',
-                            color: '#0a0c10'
-                          }}
+                          icon={<Save className="w-3.5 h-3.5" />}
                         >
-                          <Save className="w-3.5 h-3.5" />
-                          <span>Сохранить</span>
-                        </button>
+                          Сохранить
+                        </Button>
                       </div>
-                    </div>
+                    </Card>
                   )}
                 </div>
               </div>
@@ -493,328 +452,173 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* 2. COMPATIBILITY TAB */}
             {activeTab === 'compatibility' && (
               <div className="space-y-4 max-w-2xl">
-                <div className="pb-3 border-b border-white/5">
+                <div className="pb-2 border-b border-[var(--c-border)]">
                   <h3 className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
                     Совместимость модели
                   </h3>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--c-text-muted)' }}>
-                    Сравнение сигнатуры инструментов в коде с базой, на которой обучалась FunctionGemma.
-                  </p>
                 </div>
 
-                {/* Main status alert */}
-                <div
-                  className="p-4 rounded-xl border flex items-start gap-3"
-                  style={{
-                    // Positive/Neutral = Peach; Negative = Mint (as requested)
-                    backgroundColor: hasConflict && !isIgnored ? 'var(--c-mint-surface)' : 'var(--c-peach-surface)',
-                    borderColor: hasConflict && !isIgnored ? 'var(--c-mint-border)' : 'var(--c-peach-border)',
-                    color: hasConflict && !isIgnored ? 'var(--c-mint-light)' : 'var(--c-peach-light)'
-                  }}
-                >
-                  {hasConflict && !isIgnored ? (
-                    <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: 'var(--c-mint)' }} />
-                  ) : (
-                    <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" style={{ color: 'var(--c-peach)' }} />
-                  )}
-
-                  <div className="space-y-1">
-                    <div className="font-semibold text-xs">
-                      {hasConflict
-                        ? isIgnored
-                          ? 'Конфликт контрольной суммы проигнорирован пользователем'
-                          : 'Конфликт контрольной суммы: инструменты отличаются от обучающего датасета'
-                        : 'Полное соответствие: модель и скрипты синхронизированы'}
-                    </div>
-                    <div className="text-xs opacity-85">
-                      {hasConflict
-                        ? 'Код инструментов или их версии были изменены после обучения.'
-                        : 'Контрольная сумма в коде точно совпадает с весами модели.'}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Actions row */}
-                <div className="flex flex-wrap items-center gap-2 pt-2">
-                  <button
-                    onClick={onIgnoreConflict}
-                    className="px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
-                    style={{
-                      backgroundColor: isIgnored ? 'var(--c-peach-surface)' : 'var(--c-bg-secondary)',
-                      borderColor: isIgnored ? 'var(--c-peach-border)' : 'var(--c-border)',
-                      color: isIgnored ? 'var(--c-peach-light)' : 'var(--c-text)'
-                    }}
-                  >
-                    {isIgnored ? 'Отключить игнорирование' : 'Игнорировать конфликт (Ctrl+I)'}
-                  </button>
-
-                  <button
-                    onClick={onToggleModel}
-                    className="px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
-                    style={{
-                      backgroundColor: !isLoaded ? 'var(--c-mint-surface)' : 'var(--c-bg-secondary)',
-                      borderColor: !isLoaded ? 'var(--c-mint-border)' : 'var(--c-border)',
-                      color: !isLoaded ? 'var(--c-mint-light)' : 'var(--c-text)'
-                    }}
-                  >
-                    <Power className="w-3.5 h-3.5 inline mr-1" />
-                    {isLoaded ? 'Выгрузить модель (Ctrl+U)' : 'Загрузить модель'}
-                  </button>
-
-                  <button
-                    onClick={onSyncManifest}
-                    className="px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
-                    style={{
-                      backgroundColor: 'var(--c-bg-secondary)',
-                      borderColor: 'var(--c-border)',
-                      color: 'var(--c-text)'
-                    }}
-                  >
-                    Синхронизировать с кодом
-                  </button>
-                </div>
-
-                {/* Checksums box */}
-                <div
-                  className="p-3 rounded-xl border space-y-2 text-xs font-mono"
-                  style={{
-                    backgroundColor: 'var(--c-bg-secondary)',
-                    borderColor: 'var(--c-border)'
-                  }}
-                >
-                  <div>
-                    <span className="text-[11px] block" style={{ color: 'var(--c-text-muted)' }}>
-                      Ожидаемая сумма модели:
-                    </span>
-                    <span className="break-all" style={{ color: 'var(--c-text)' }}>
-                      {conflict?.expectedChecksum}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-[11px] block" style={{ color: 'var(--c-text-muted)' }}>
-                      Фактическая сумма модулей:
-                    </span>
-                    <span
-                      className="break-all"
-                      style={{
-                        color: hasConflict ? 'var(--c-mint-light)' : 'var(--c-peach-light)'
-                      }}
-                    >
-                      {conflict?.actualChecksum}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Diff items if conflict */}
-                {hasConflict && conflict && (
-                  <div className="space-y-2">
-                    {conflict.alteredTools.length > 0 && (
-                      <div
-                        className="p-3 rounded-xl border space-y-1.5 text-xs"
-                        style={{
-                          backgroundColor: 'var(--c-mint-surface)',
-                          borderColor: 'var(--c-mint-border)',
-                          color: 'var(--c-mint-light)'
-                        }}
-                      >
-                        <div className="font-semibold">Измененные инструменты:</div>
-                        {conflict.alteredTools.map((t, idx) => (
-                          <div key={idx} className="font-mono text-[11px] flex justify-between">
-                            <span>{t.name}</span>
-                            <span>v{t.expectedVersion} → v{t.actualVersion}</span>
-                          </div>
-                        ))}
+                <div className="space-y-3">
+                  <Card className="flex items-center justify-between p-3">
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-semibold" style={{ color: 'var(--c-text)' }}>
+                        Статус инференса
                       </div>
-                    )}
-                  </div>
-                )}
+                      <div className="text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
+                        {isLoaded ? 'Модель готова к выполнению запросов' : 'Модель выгружена из памяти'}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant={isLoaded ? 'secondary' : 'primary'}
+                      onClick={onToggleModel}
+                    >
+                      {isLoaded ? 'Выгрузить' : 'Загрузить'}
+                    </Button>
+                  </Card>
+
+                  <Card className="space-y-2 p-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span style={{ color: 'var(--c-text)' }}>Контрольная сумма модулей</span>
+                      <Badge variant={hasConflict && !isIgnored ? 'mint' : 'peach'}>
+                        {hasConflict && !isIgnored ? 'Конфликт сигнатур' : 'Совпадает'}
+                      </Badge>
+                    </div>
+                    <div className="text-[11px] font-mono text-[var(--c-text-muted)]">
+                      SHA256: {currentChecksum}
+                    </div>
+                    <div className="flex items-center gap-2 pt-2">
+                      <Button size="sm" variant="secondary" onClick={onSyncManifest}>
+                        Синхронизировать
+                      </Button>
+                      {hasConflict && (
+                        <Button size="sm" variant="outline" onClick={onIgnoreConflict}>
+                          {isIgnored ? 'Учитывать расхождения' : 'Игнорировать конфликт'}
+                        </Button>
+                      )}
+                    </div>
+                  </Card>
+                </div>
               </div>
             )}
 
-            {/* 3. HISTORY & ANALYTICS TAB */}
+            {/* 3. HISTORY TAB */}
             {activeTab === 'history' && (
-              <div className="space-y-4 max-w-3xl">
-                <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                  <div>
-                    <h3 className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
-                      История и аналитика
-                    </h3>
-                    <p className="text-xs mt-0.5" style={{ color: 'var(--c-text-muted)' }}>
-                      Журнал запросов, статистика точности и разметка ответов для дообучения.
-                    </p>
-                  </div>
+              <div className="space-y-4 max-w-2xl">
+                <div className="flex items-center justify-between pb-2 border-b border-[var(--c-border)]">
+                  <h3 className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
+                    История
+                  </h3>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => onExportLogs('json')}
-                      className="px-2.5 py-1.5 rounded-lg border text-xs flex items-center gap-1.5 text-[var(--c-text-muted)] hover:text-[var(--c-text)]"
-                      style={{
-                        backgroundColor: 'var(--c-bg-secondary)',
-                        borderColor: 'var(--c-border)'
-                      }}
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>JSON</span>
-                    </button>
-
-                    <button
-                      onClick={() => onExportLogs('jsonl')}
-                      className="px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all"
-                      style={{
-                        backgroundColor: 'var(--c-peach-surface)',
-                        color: 'var(--c-peach-light)',
-                        border: '1px solid var(--c-peach-border)'
-                      }}
-                    >
-                      <FileSpreadsheet className="w-3.5 h-3.5" />
-                      <span>JSONL датасет</span>
-                    </button>
+                    <Button size="sm" variant="secondary" onClick={() => onExportLogs('json')}>
+                      Экспорт JSON
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => onExportLogs('jsonl')}>
+                      Экспорт JSONL
+                    </Button>
                   </div>
                 </div>
 
-                {/* Metrics Stats */}
-                <div className="grid grid-cols-4 gap-2.5">
-                  <div
-                    className="p-3 rounded-xl border"
-                    style={{
-                      backgroundColor: 'var(--c-bg-secondary)',
-                      borderColor: 'var(--c-border)'
-                    }}
-                  >
-                    <span className="text-[11px] block" style={{ color: 'var(--c-text-muted)' }}>
-                      Точность
-                    </span>
-                    <span className="text-lg font-bold font-mono" style={{ color: 'var(--c-peach-light)' }}>
-                      {stats.accuracyPercent}%
-                    </span>
-                  </div>
-
-                  <div
-                    className="p-3 rounded-xl border"
-                    style={{
-                      backgroundColor: 'var(--c-bg-secondary)',
-                      borderColor: 'var(--c-border)'
-                    }}
-                  >
-                    <span className="text-[11px] block" style={{ color: 'var(--c-text-muted)' }}>
-                      Точные вызовы
-                    </span>
-                    <span className="text-lg font-bold font-mono" style={{ color: 'var(--c-peach-light)' }}>
+                {/* Stats row */}
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <Card className="py-2 px-3">
+                    <span className="text-[11px] block" style={{ color: 'var(--c-text-muted)' }}>Точные вызовы</span>
+                    <span className="text-base font-bold font-mono text-[var(--c-peach-light)]">
                       {stats.exact}
                     </span>
-                  </div>
-
-                  <div
-                    className="p-3 rounded-xl border"
-                    style={{
-                      backgroundColor: 'var(--c-bg-secondary)',
-                      borderColor: 'var(--c-border)'
-                    }}
-                  >
-                    <span className="text-[11px] block" style={{ color: 'var(--c-text-muted)' }}>
-                      Галлюцинации
-                    </span>
-                    <span className="text-lg font-bold font-mono" style={{ color: 'var(--c-mint-light)' }}>
+                  </Card>
+                  <Card className="py-2 px-3">
+                    <span className="text-[11px] block" style={{ color: 'var(--c-text-muted)' }}>Галлюцинации</span>
+                    <span className="text-base font-bold font-mono text-[var(--c-mint-light)]">
                       {stats.hallucinated}
                     </span>
-                  </div>
-
-                  <div
-                    className="p-3 rounded-xl border"
-                    style={{
-                      backgroundColor: 'var(--c-bg-secondary)',
-                      borderColor: 'var(--c-border)'
-                    }}
-                  >
-                    <span className="text-[11px] block" style={{ color: 'var(--c-text-muted)' }}>
-                      Ошибки
-                    </span>
-                    <span className="text-lg font-bold font-mono" style={{ color: 'var(--c-mint-light)' }}>
+                  </Card>
+                  <Card className="py-2 px-3">
+                    <span className="text-[11px] block" style={{ color: 'var(--c-text-muted)' }}>Ошибки</span>
+                    <span className="text-base font-bold font-mono text-[var(--c-mint-light)]">
                       {stats.failed}
                     </span>
-                  </div>
+                  </Card>
                 </div>
 
-                {/* Logs list with quality rating */}
+                {/* Logs list with icons for rating and model name display */}
                 <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
                   {logs.length === 0 ? (
-                    <div className="text-center py-10 text-xs text-[var(--c-text-muted)]">
-                      История запросов пуста.
+                    <div className="text-center py-8 text-xs text-[var(--c-text-muted)]">
+                      История пуста.
                     </div>
                   ) : (
                     logs.map(log => (
-                      <div
-                        key={log.id}
-                        className="p-3 rounded-xl border text-xs space-y-2"
-                        style={{
-                          backgroundColor: 'var(--c-bg-secondary)',
-                          borderColor: 'var(--c-border)'
-                        }}
-                      >
+                      <Card key={log.id} className="p-3 text-xs space-y-2">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className="font-mono text-[11px] text-[var(--c-text-muted)]">
                               {new Date(log.timestamp).toLocaleTimeString()}
                             </span>
-                            <span
-                              className="font-mono px-2 py-0.5 rounded-md text-[11px]"
-                              style={{
-                                backgroundColor: 'var(--c-peach-surface)',
-                                color: 'var(--c-peach-light)'
-                              }}
-                            >
+                            <Badge variant="peach" size="sm">
                               {log.toolCalled || 'нет вызова'}
-                            </span>
+                            </Badge>
                           </div>
-                          <span className="text-[10px] text-[var(--c-text-dim)]">
-                            {log.durationMs}ms
-                          </span>
+
+                          {/* Responding Model Name */}
+                          <div className="flex items-center gap-1.5 text-[11px] font-mono text-[var(--c-text-muted)]">
+                            <Cpu className="w-3 h-3 text-[var(--c-peach)]" />
+                            <span>{log.modelName || 'FunctionGemma-7B'}</span>
+                          </div>
                         </div>
 
-                        <div style={{ color: 'var(--c-text)' }}>"{log.prompt}"</div>
+                        <div className="font-medium" style={{ color: 'var(--c-text)' }}>
+                          "{log.prompt}"
+                        </div>
 
-                        {/* Quality rating selector in history tab */}
+                        {/* Quality rating selector with meaningful ICONS */}
                         <div className="flex items-center justify-between pt-1 border-t border-white/5">
                           <span className="text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
-                            Оценка ответа:
+                            Оценка:
                           </span>
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1.5">
                             <button
+                              type="button"
                               onClick={() => onRateAccuracy(log.id, 'EXACT')}
-                              className="px-2 py-0.5 rounded text-[10px] font-mono border transition-colors"
-                              style={{
-                                backgroundColor: log.accuracyRating === 'EXACT' ? 'var(--c-peach-surface)' : 'transparent',
-                                borderColor: log.accuracyRating === 'EXACT' ? 'var(--c-peach-border)' : 'var(--c-border)',
-                                color: log.accuracyRating === 'EXACT' ? 'var(--c-peach-light)' : 'var(--c-text-muted)'
-                              }}
+                              title="Точно"
+                              className={`p-1.5 rounded-lg border transition-all ${
+                                log.accuracyRating === 'EXACT'
+                                  ? 'bg-[var(--c-peach-surface)] border-[var(--c-peach-border)] text-[var(--c-peach-light)]'
+                                  : 'border-[var(--c-border)] text-[var(--c-text-muted)] hover:text-[var(--c-text)]'
+                              }`}
                             >
-                              Точно
+                              <CheckCircle2 className="w-4 h-4" />
                             </button>
+
                             <button
+                              type="button"
                               onClick={() => onRateAccuracy(log.id, 'HALLUCINATED_ARGS')}
-                              className="px-2 py-0.5 rounded text-[10px] font-mono border transition-colors"
-                              style={{
-                                backgroundColor: log.accuracyRating === 'HALLUCINATED_ARGS' ? 'var(--c-mint-surface)' : 'transparent',
-                                borderColor: log.accuracyRating === 'HALLUCINATED_ARGS' ? 'var(--c-mint-border)' : 'var(--c-border)',
-                                color: log.accuracyRating === 'HALLUCINATED_ARGS' ? 'var(--c-mint-light)' : 'var(--c-text-muted)'
-                              }}
+                              title="Галлюцинация параметров"
+                              className={`p-1.5 rounded-lg border transition-all ${
+                                log.accuracyRating === 'HALLUCINATED_ARGS'
+                                  ? 'bg-[var(--c-mint-surface)] border-[var(--c-mint-border)] text-[var(--c-mint-light)]'
+                                  : 'border-[var(--c-border)] text-[var(--c-text-muted)] hover:text-[var(--c-text)]'
+                              }`}
                             >
-                              Галлюцинация
+                              <Sparkles className="w-4 h-4" />
                             </button>
+
                             <button
+                              type="button"
                               onClick={() => onRateAccuracy(log.id, 'WRONG_TOOL')}
-                              className="px-2 py-0.5 rounded text-[10px] font-mono border transition-colors"
-                              style={{
-                                backgroundColor: log.accuracyRating === 'WRONG_TOOL' ? 'var(--c-mint-surface)' : 'transparent',
-                                borderColor: log.accuracyRating === 'WRONG_TOOL' ? 'var(--c-mint-border)' : 'var(--c-border)',
-                                color: log.accuracyRating === 'WRONG_TOOL' ? 'var(--c-mint-light)' : 'var(--c-text-muted)'
-                              }}
+                              title="Неверный инструмент"
+                              className={`p-1.5 rounded-lg border transition-all ${
+                                log.accuracyRating === 'WRONG_TOOL'
+                                  ? 'bg-[var(--c-mint-surface)] border-[var(--c-mint-border)] text-[var(--c-mint-light)]'
+                                  : 'border-[var(--c-border)] text-[var(--c-text-muted)] hover:text-[var(--c-text)]'
+                              }`}
                             >
-                              Неверный инструмент
+                              <Wrench className="w-4 h-4" />
                             </button>
                           </div>
                         </div>
-                      </div>
+                      </Card>
                     ))
                   )}
                 </div>
@@ -824,190 +628,133 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* 4. APPEARANCE TAB */}
             {activeTab === 'appearance' && (
               <div className="space-y-4 max-w-2xl">
-                <div className="pb-3 border-b border-white/5">
+                <div className="pb-2 border-b border-[var(--c-border)]">
                   <h3 className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
                     Оформление
                   </h3>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--c-text-muted)' }}>
-                    Настройка цветовой палитры и прозрачности оверлея в дизайн-пайплайне Apple.
-                  </p>
                 </div>
 
-                {/* Color Swatches Grid */}
-                <div className="space-y-3">
+                {/* Color Palettes Grid with 1 and 2 buttons */}
+                <div className="space-y-2">
                   <span className="text-xs font-medium" style={{ color: 'var(--c-text)' }}>
-                    Палитра системы
+                    Цветовые палитры:
                   </span>
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    {/* Peach Group */}
-                    <div
-                      className="p-3 rounded-xl border space-y-2"
-                      style={{
-                        backgroundColor: 'var(--c-bg-secondary)',
-                        borderColor: 'var(--c-border)'
-                      }}
-                    >
-                      <span className="font-semibold text-xs" style={{ color: 'var(--c-peach-light)' }}>
-                        Персиковый (Положительный / Нейтральный)
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-6 h-6 rounded-lg border border-white/10 shadow-sm"
-                          style={{ backgroundColor: 'var(--c-peach)' }}
-                          title="Основной персиковый"
-                        />
-                        <span
-                          className="w-6 h-6 rounded-lg border border-white/10 shadow-sm"
-                          style={{ backgroundColor: 'var(--c-peach-light)' }}
-                          title="Светлый оттенок"
-                        />
-                        <span
-                          className="w-6 h-6 rounded-lg border border-white/10 shadow-sm"
-                          style={{ backgroundColor: 'var(--c-peach-dark)' }}
-                          title="Тёмный оттенок"
-                        />
-                      </div>
-                    </div>
 
-                    {/* Mint Group */}
-                    <div
-                      className="p-3 rounded-xl border space-y-2"
-                      style={{
-                        backgroundColor: 'var(--c-bg-secondary)',
-                        borderColor: 'var(--c-border)'
-                      }}
-                    >
-                      <span className="font-semibold text-xs" style={{ color: 'var(--c-mint-light)' }}>
-                        Мятный (Отрицательный / Предупреждения)
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-6 h-6 rounded-lg border border-white/10 shadow-sm"
-                          style={{ backgroundColor: 'var(--c-mint)' }}
-                          title="Основной мятный"
-                        />
-                        <span
-                          className="w-6 h-6 rounded-lg border border-white/10 shadow-sm"
-                          style={{ backgroundColor: 'var(--c-mint-light)' }}
-                          title="Светлый оттенок"
-                        />
-                        <span
-                          className="w-6 h-6 rounded-lg border border-white/10 shadow-sm"
-                          style={{ backgroundColor: 'var(--c-mint-dark)' }}
-                          title="Тёмный оттенок"
-                        />
-                      </div>
-                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    {AVAILABLE_PALETTES.map(pal => {
+                      const isPrimary = primaryPalette === pal.id;
+                      const isSecondary = secondaryPalette === pal.id;
+
+                      return (
+                        <Card
+                          key={pal.id}
+                          className="flex items-center justify-between p-2.5"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex items-center gap-1">
+                              <span
+                                className="w-4 h-4 rounded-md border border-white/10"
+                                style={{ backgroundColor: pal.main }}
+                              />
+                              <span
+                                className="w-4 h-4 rounded-md border border-white/10"
+                                style={{ backgroundColor: pal.light }}
+                              />
+                              <span
+                                className="w-4 h-4 rounded-md border border-white/10"
+                                style={{ backgroundColor: pal.dark }}
+                              />
+                            </div>
+                            <span className="font-medium" style={{ color: 'var(--c-text)' }}>
+                              {pal.name}
+                            </span>
+                          </div>
+
+                          {/* Buttons '1' and '2' */}
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleSelectPrimaryPalette(pal.id)}
+                              className={`w-6 h-6 rounded-md font-mono text-xs font-bold transition-all ${
+                                isPrimary
+                                  ? 'bg-[var(--c-peach)] text-zinc-950 ring-1 ring-[var(--c-peach)]'
+                                  : 'bg-[var(--c-bg-tertiary)] text-[var(--c-text-muted)] hover:text-[var(--c-text)] border border-[var(--c-border)]'
+                              }`}
+                              title="Выбрать как первичный цвет (1)"
+                            >
+                              1
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleSelectSecondaryPalette(pal.id)}
+                              className={`w-6 h-6 rounded-md font-mono text-xs font-bold transition-all ${
+                                isSecondary
+                                  ? 'bg-[var(--c-mint)] text-white ring-1 ring-[var(--c-mint)]'
+                                  : 'bg-[var(--c-bg-tertiary)] text-[var(--c-text-muted)] hover:text-[var(--c-text)] border border-[var(--c-border)]'
+                              }`}
+                              title="Выбрать как вторичный цвет (2)"
+                            >
+                              2
+                            </button>
+                          </div>
+                        </Card>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* Transparency slider */}
-                <div
-                  className="p-3 rounded-xl border space-y-2"
-                  style={{
-                    backgroundColor: 'var(--c-bg-secondary)',
-                    borderColor: 'var(--c-border)'
-                  }}
-                >
+                {/* Transparency slider - named simply "Прозрачность" */}
+                <Card className="space-y-2 p-3">
                   <div className="flex items-center justify-between text-xs">
-                    <span style={{ color: 'var(--c-text)' }}>Прозрачность подложки рабочего стола</span>
-                    <span className="font-mono" style={{ color: 'var(--c-peach-light)' }}>
+                    <span style={{ color: 'var(--c-text)' }}>Прозрачность</span>
+                    <span className="font-mono text-[var(--c-peach-light)]">
                       {Math.round(desktopOpacity * 100)}%
                     </span>
                   </div>
                   <input
                     type="range"
-                    min="0.1"
+                    min="0.05"
                     max="1"
                     step="0.05"
                     value={desktopOpacity}
                     onChange={e => setDesktopOpacity(parseFloat(e.target.value))}
-                    className="w-full accent-[var(--c-peach)]"
+                    className="w-full accent-[var(--c-peach)] cursor-pointer"
                   />
-                </div>
+                </Card>
 
-                {/* Desktop background toggle */}
-                <div
-                  className="p-3 rounded-xl border flex items-center justify-between text-xs"
-                  style={{
-                    backgroundColor: 'var(--c-bg-secondary)',
-                    borderColor: 'var(--c-border)'
-                  }}
-                >
-                  <span style={{ color: 'var(--c-text)' }}>Фон рабочего стола для тестирования прозрачности</span>
-                  <button
-                    onClick={() => setShowDesktop(!showDesktop)}
-                    className="px-3 py-1 rounded-lg border text-xs font-medium transition-colors"
-                    style={{
-                      backgroundColor: showDesktop ? 'var(--c-peach-surface)' : 'transparent',
-                      borderColor: showDesktop ? 'var(--c-peach-border)' : 'var(--c-border)',
-                      color: showDesktop ? 'var(--c-peach-light)' : 'var(--c-text-muted)'
-                    }}
-                  >
-                    {showDesktop ? 'Включен' : 'Отключен'}
-                  </button>
-                </div>
-
-                {/* Sound effects controls */}
-                <div
-                  className="p-3.5 rounded-xl border space-y-3 text-xs"
-                  style={{
-                    backgroundColor: 'var(--c-bg-secondary)',
-                    borderColor: 'var(--c-border)'
-                  }}
-                >
+                {/* Sound effects controls - no redundant subtitle */}
+                <Card className="space-y-3 p-3 text-xs">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Volume2 className="w-4 h-4 text-orange-400" />
+                      <Volume2 className="w-4 h-4 text-[var(--c-peach)]" />
                       <span className="font-medium" style={{ color: 'var(--c-text)' }}>
-                        Звуковые сигналы действий
+                        Звуковые сигналы
                       </span>
                     </div>
-                    <button
-                      id="toggle-sounds-btn"
+                    <Button
+                      size="sm"
+                      variant={soundEffects.isEnabled() ? 'primary' : 'outline'}
                       onClick={() => {
                         const next = !soundEffects.isEnabled();
                         soundEffects.setEnabled(next);
                         if (next) soundEffects.playCompletionPing();
-                        // trigger force update
                         setShowDesktop(prev => prev);
-                      }}
-                      className="px-3 py-1 rounded-lg border text-xs font-medium transition-colors"
-                      style={{
-                        backgroundColor: soundEffects.isEnabled() ? 'var(--c-peach-surface)' : 'transparent',
-                        borderColor: soundEffects.isEnabled() ? 'var(--c-peach-border)' : 'var(--c-border)',
-                        color: soundEffects.isEnabled() ? 'var(--c-peach-light)' : 'var(--c-text-muted)'
                       }}
                     >
                       {soundEffects.isEnabled() ? 'Включены' : 'Выключены'}
-                    </button>
+                    </Button>
                   </div>
-
-                  <p className="text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
-                    Ненавязчивые акустические отклики: завершение выполнения, вызов инструментов, успешный импорт модулей.
-                  </p>
 
                   <div className="flex items-center gap-2 pt-1">
-                    <button
-                      onClick={() => soundEffects.playSuccessChime()}
-                      className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-300 border border-zinc-700 transition-colors"
-                    >
-                      Тест: Успех модулей
-                    </button>
-                    <button
-                      onClick={() => soundEffects.playCompletionPing()}
-                      className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-300 border border-zinc-700 transition-colors"
-                    >
-                      Тест: Завершение запроса
-                    </button>
-                    <button
-                      onClick={() => soundEffects.playToolCallCue()}
-                      className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-300 border border-zinc-700 transition-colors"
-                    >
-                      Тест: Вызов инструмента
-                    </button>
+                    <Button size="sm" variant="secondary" onClick={() => soundEffects.playSuccessChime()}>
+                      Тест: Завершение
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => soundEffects.playToolCallCue()}>
+                      Тест: Вызов
+                    </Button>
                   </div>
-                </div>
+                </Card>
               </div>
             )}
 
@@ -1023,267 +770,73 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* VOICE STT TAB */}
             {activeTab === 'voice' && <VoiceSTTTab />}
 
-            {/* DOCKER DEPLOY TAB */}
-            {activeTab === 'docker' && <DockerDeployTab />}
+            {/* NETWORK TAB */}
+            {activeTab === 'network' && <NetworkSettingsTab />}
 
-            {/* 5. ABOUT TAB (Hotkeys, technical details, system info) */}
+            {/* HOTKEYS TAB */}
+            {activeTab === 'hotkeys' && <HotkeysTab />}
+
+            {/* 5. ABOUT TAB - Technical information list */}
             {activeTab === 'about' && (
               <div className="space-y-4 max-w-2xl">
-                <div className="pb-3 border-b border-white/5">
+                <div className="pb-2 border-b border-[var(--c-border)]">
                   <h3 className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
-                    О приложении и сочетания клавиш
+                    О приложении
                   </h3>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--c-text-muted)' }}>
-                    Справочник горячих клавиш и технические параметры среды FunctionGemma.
-                  </p>
                 </div>
 
-                {/* Hotkeys reference table */}
-                <div
-                  className="p-3 rounded-xl border space-y-2 text-xs"
-                  style={{
-                    backgroundColor: 'var(--c-bg-secondary)',
-                    borderColor: 'var(--c-border)'
-                  }}
-                >
-                  <div className="font-semibold pb-1 border-b border-white/5" style={{ color: 'var(--c-text)' }}>
-                    Сочетания клавиш
-                  </div>
-
-                  <div className="space-y-1.5 text-[12px]">
-                    <div className="flex items-center justify-between py-1">
-                      <span style={{ color: 'var(--c-text)' }}>Вызов / скрытие HUD</span>
-                      <kbd
-                        className="px-2 py-0.5 rounded-md font-mono text-[11px] border"
-                        style={{
-                          backgroundColor: 'var(--c-bg-tertiary)',
-                          borderColor: 'var(--c-border)',
-                          color: 'var(--c-peach-light)'
-                        }}
-                      >
-                        Alt + Space / Ctrl + K
-                      </kbd>
+                {/* Technical information formatted as a clean list */}
+                <Card className="p-3">
+                  <div className="divide-y divide-[var(--c-border)] text-xs">
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Версия оверлея</span>
+                      <span className="font-mono font-medium" style={{ color: 'var(--c-text)' }}>2.4.0 (Electron / Web)</span>
                     </div>
 
-                    <div className="flex items-center justify-between py-1">
-                      <span style={{ color: 'var(--c-text)' }}>Открыть настройки</span>
-                      <kbd
-                        className="px-2 py-0.5 rounded-md font-mono text-[11px] border"
-                        style={{
-                          backgroundColor: 'var(--c-bg-tertiary)',
-                          borderColor: 'var(--c-border)',
-                          color: 'var(--c-peach-light)'
-                        }}
-                      >
-                        Ctrl + ,
-                      </kbd>
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Базовая модель</span>
+                      <span className="font-mono font-medium" style={{ color: 'var(--c-peach-light)' }}>FunctionGemma-7B (FineTuned)</span>
                     </div>
 
-                    <div className="flex items-center justify-between py-1">
-                      <span style={{ color: 'var(--c-text)' }}>Закрыть окно / оверлей</span>
-                      <kbd
-                        className="px-2 py-0.5 rounded-md font-mono text-[11px] border"
-                        style={{
-                          backgroundColor: 'var(--c-bg-tertiary)',
-                          borderColor: 'var(--c-border)',
-                          color: 'var(--c-text)'
-                        }}
-                      >
-                        Escape
-                      </kbd>
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Формат весов</span>
+                      <span className="font-mono" style={{ color: 'var(--c-text)' }}>GGUF Q4_K_M (4-bit quant)</span>
                     </div>
 
-                    <div className="flex items-center justify-between py-1">
-                      <span style={{ color: 'var(--c-text)' }}>Выгрузить / загрузить модель</span>
-                      <kbd
-                        className="px-2 py-0.5 rounded-md font-mono text-[11px] border"
-                        style={{
-                          backgroundColor: 'var(--c-bg-tertiary)',
-                          borderColor: 'var(--c-border)',
-                          color: 'var(--c-mint-light)'
-                        }}
-                      >
-                        Ctrl + U
-                      </kbd>
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Контрольная сумма SHA-256</span>
+                      <span className="font-mono text-[11px] truncate max-w-[200px]" style={{ color: 'var(--c-text)' }}>
+                        {currentChecksum || '6c8fa8e...'}
+                      </span>
                     </div>
 
-                    <div className="flex items-center justify-between py-1">
-                      <span style={{ color: 'var(--c-text)' }}>Игнорировать конфликт сигнатуры</span>
-                      <kbd
-                        className="px-2 py-0.5 rounded-md font-mono text-[11px] border"
-                        style={{
-                          backgroundColor: 'var(--c-bg-tertiary)',
-                          borderColor: 'var(--c-border)',
-                          color: 'var(--c-peach-light)'
-                        }}
-                      >
-                        Ctrl + I
-                      </kbd>
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Рантайм</span>
+                      <span className="font-mono" style={{ color: 'var(--c-text)' }}>Node.js / Express / Vite</span>
                     </div>
 
-                    <div className="flex items-center justify-between py-1">
-                      <span style={{ color: 'var(--c-text)' }}>Перезагрузить модули скриптов</span>
-                      <kbd
-                        className="px-2 py-0.5 rounded-md font-mono text-[11px] border"
-                        style={{
-                          backgroundColor: 'var(--c-bg-tertiary)',
-                          borderColor: 'var(--c-border)',
-                          color: 'var(--c-text)'
-                        }}
-                      >
-                        Ctrl + R
-                      </kbd>
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Режим отображения</span>
+                      <span className="font-mono" style={{ color: 'var(--c-text)' }}>Hardware-accelerated Transparent Overlay</span>
+                    </div>
+
+                    <div className="py-2 flex items-center justify-between">
+                      <span style={{ color: 'var(--c-text-muted)' }}>Сетевой порт</span>
+                      <span className="font-mono" style={{ color: 'var(--c-text)' }}>3000 (0.0.0.0)</span>
                     </div>
                   </div>
-                </div>
-
-                {/* Technical specs */}
-                <div
-                  className="p-3 rounded-xl border space-y-1.5 text-xs font-mono"
-                  style={{
-                    backgroundColor: 'var(--c-bg-secondary)',
-                    borderColor: 'var(--c-border)'
-                  }}
-                >
-                  <div className="font-sans font-semibold pb-1 border-b border-white/5" style={{ color: 'var(--c-text)' }}>
-                    Сведения о системе
-                  </div>
-                  <div className="flex justify-between">
-                    <span style={{ color: 'var(--c-text-muted)' }}>Модель:</span>
-                    <span style={{ color: 'var(--c-peach-light)' }}>{manifest?.modelName || 'FunctionGemma-7b'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span style={{ color: 'var(--c-text-muted)' }}>Версия манифеста:</span>
-                    <span style={{ color: 'var(--c-text)' }}>{manifest?.version}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span style={{ color: 'var(--c-text-muted)' }}>Контрольная сумма:</span>
-                    <span className="text-[11px] truncate max-w-xs" style={{ color: 'var(--c-text)' }}>
-                      {currentChecksum}
-                    </span>
-                  </div>
-                </div>
+                </Card>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Modal for adding new tool */}
-      {showNewToolModal && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <form
-            onSubmit={handleCreateNewTool}
-            className="w-full max-w-md p-4 rounded-2xl border shadow-2xl space-y-3 text-xs"
-            style={{
-              backgroundColor: 'var(--c-bg-secondary)',
-              borderColor: 'var(--c-border)'
-            }}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-white/5">
-              <span className="font-semibold text-sm" style={{ color: 'var(--c-text)' }}>
-                Новый инструмент
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowNewToolModal(false)}
-                className="text-[var(--c-text-muted)] hover:text-[var(--c-text)]"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div>
-              <label className="block mb-1 text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
-                Имя функции (латиница)
-              </label>
-              <input
-                type="text"
-                required
-                value={newToolName}
-                onChange={e => setNewToolName(e.target.value)}
-                placeholder="например: quick_notes"
-                className="w-full px-2.5 py-1.5 rounded-lg border font-mono bg-transparent"
-                style={{ borderColor: 'var(--c-border)', color: 'var(--c-text)' }}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block mb-1 text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
-                  Модуль (папка)
-                </label>
-                <select
-                  value={newToolModule}
-                  onChange={e => setNewToolModule(e.target.value)}
-                  className="w-full px-2 py-1.5 rounded-lg border bg-[var(--c-bg-primary)]"
-                  style={{ borderColor: 'var(--c-border)', color: 'var(--c-text)' }}
-                >
-                  <option value="system">system</option>
-                  <option value="search">search</option>
-                  <option value="files">files</option>
-                  <option value="developer">developer</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block mb-1 text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
-                  Версия
-                </label>
-                <input
-                  type="text"
-                  value={newToolVersion}
-                  onChange={e => setNewToolVersion(e.target.value)}
-                  className="w-full px-2.5 py-1.5 rounded-lg border font-mono bg-transparent"
-                  style={{ borderColor: 'var(--c-border)', color: 'var(--c-text)' }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block mb-1 text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
-                Описание назначения инструмента
-              </label>
-              <input
-                type="text"
-                value={newToolDesc}
-                onChange={e => setNewToolDesc(e.target.value)}
-                placeholder="Что делает инструмент"
-                className="w-full px-2.5 py-1.5 rounded-lg border bg-transparent"
-                style={{ borderColor: 'var(--c-border)', color: 'var(--c-text)' }}
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/5">
-              <button
-                type="button"
-                onClick={() => setShowNewToolModal(false)}
-                className="px-3 py-1.5 rounded-lg text-xs"
-                style={{ color: 'var(--c-text-muted)' }}
-              >
-                Отмена
-              </button>
-              <button
-                type="submit"
-                className="px-3.5 py-1.5 rounded-lg text-xs font-medium"
-                style={{
-                  backgroundColor: 'var(--c-peach)',
-                  color: '#0a0c10'
-                }}
-              >
-                Создать
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Fine-Tuning Dataset Export Modal */}
+      {/* Dataset Fine-Tuning Modal */}
       <FineTuningExportModal
         isOpen={showDatasetModal}
         onClose={() => setShowDatasetModal(false)}
         tools={tools}
-        checksum={currentChecksum}
         manifest={manifest}
       />
     </div>

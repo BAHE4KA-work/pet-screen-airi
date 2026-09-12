@@ -208,8 +208,9 @@ export interface StorageInfo {
 }
 
 export interface STTConfig {
-  endpoint: string;
-  model: string;
+  endpoint?: string;
+  model?: string;
+  modelFile: string;
   language: string;
   enabled: boolean;
   useWebSpeechFallback: boolean;

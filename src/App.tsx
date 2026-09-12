@@ -20,6 +20,8 @@ import {
 } from './types';
 import { soundEffects } from './utils/audioEffects';
 import { electronBridge } from './utils/electronBridge';
+import { themeManager } from './utils/themeManager';
+import { hotkeyManager } from './utils/hotkeyManager';
 
 export default function App() {
   const [status, setStatus] = useState<ModelStatus | null>(null);
@@ -390,25 +392,39 @@ export default function App() {
     setSettingsOpen(true);
   };
 
-  // Keyboard Shortcuts Handler
+  // Initialize Theme
+  useEffect(() => {
+    themeManager.init();
+  }, []);
+
+  // Update interactivity when visibility changes
+  useEffect(() => {
+    if (!hudVisible && !settingsOpen && views.length === 0) {
+      electronBridge.setInteractive(false);
+    } else {
+      electronBridge.setInteractive(true);
+    }
+  }, [hudVisible, settingsOpen, views.length]);
+
+  // Keyboard Shortcuts Handler using hotkeyManager
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 1. Toggle HUD: Alt+Space or Ctrl+K / Cmd+K
-      if ((e.altKey && e.code === 'Space') || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k')) {
+      // 1. Toggle HUD
+      if (hotkeyManager.matches('toggle_hud', e) || (e.altKey && e.code === 'Space') || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k')) {
         e.preventDefault();
         setHudVisible(prev => !prev);
         return;
       }
 
-      // 2. Open Settings: Ctrl+, or Cmd+,
-      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+      // 2. Open Settings
+      if (hotkeyManager.matches('open_settings', e) || ((e.ctrlKey || e.metaKey) && e.key === ',')) {
         e.preventDefault();
         setSettingsOpen(prev => !prev);
         return;
       }
 
-      // 3. Escape: Close settings modal or hide HUD
-      if (e.key === 'Escape') {
+      // 3. Escape / Close Window
+      if (hotkeyManager.matches('close_window', e) || e.key === 'Escape') {
         if (settingsOpen) {
           setSettingsOpen(false);
           return;
@@ -419,18 +435,16 @@ export default function App() {
         }
       }
 
-      // 4. Quick toggles
-      if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-        if (e.key.toLowerCase() === 'u') {
-          e.preventDefault();
-          handleToggleModel();
-        } else if (e.key.toLowerCase() === 'i') {
-          e.preventDefault();
-          handleIgnoreConflict();
-        } else if (e.key.toLowerCase() === 'r') {
-          e.preventDefault();
-          handleReloadModules();
-        }
+      // 4. Quick actions
+      if (hotkeyManager.matches('toggle_model', e)) {
+        e.preventDefault();
+        handleToggleModel();
+      } else if (hotkeyManager.matches('ignore_conflict', e)) {
+        e.preventDefault();
+        handleIgnoreConflict();
+      } else if (hotkeyManager.matches('reload_modules', e)) {
+        e.preventDefault();
+        handleReloadModules();
       }
     };
 
@@ -490,89 +504,70 @@ export default function App() {
         ))}
       </div>
 
-      {/* When HUD is hidden, subtle crossed-eye icon trigger to summon it */}
-      {!hudVisible && (
-        <div className="fixed inset-0 z-30 flex items-center justify-center pointer-events-none">
-          <button
-            id="summon-hud-eye-btn"
-            data-interactive="true"
-            onMouseEnter={() => electronBridge.setInteractive(true)}
-            onClick={() => setHudVisible(true)}
-            className="pointer-events-auto interactive-ui p-4 rounded-2xl border shadow-xl backdrop-blur-xl transition-all duration-300 hover:scale-105"
-            style={{
-              backgroundColor: 'rgba(18, 21, 29, 0.75)',
-              borderColor: 'var(--c-border)',
-              color: 'var(--c-text-muted)'
-            }}
-            title="Alt + Space"
-          >
-            <EyeOff className="w-6 h-6 hover:text-[var(--c-peach)] transition-colors" />
-          </button>
-        </div>
-      )}
-
-      {/* Discrete Corner Control Bar (Minimal Apple-style dock) */}
-      <aside
-        id="corner-dock-controls"
-        data-interactive="true"
-        onClick={e => e.stopPropagation()}
-        onMouseEnter={() => electronBridge.setInteractive(true)}
-        className="interactive-ui fixed top-4 right-4 z-40 flex items-center gap-1.5 p-1.5 rounded-xl border shadow-lg backdrop-blur-xl transition-all"
-        style={{
-          backgroundColor: 'rgba(18, 21, 29, 0.8)',
-          borderColor: 'var(--c-border)'
-        }}
-      >
-        {/* Fullscreen Toggle */}
-        <button
-          id="dock-fullscreen-btn"
-          onClick={toggleFullscreen}
-          className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
-          title={isFullscreen ? 'Выйти из полноэкранного режима' : 'Развернуть оверлей на весь экран (F11)'}
-        >
-          {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-        </button>
-
-        {/* Quick standard View: Time */}
-        <button
-          id="dock-quick-time-btn"
-          onClick={() => {
-            handleSpawnView({
-              id: `view-time-${Date.now()}`,
-              type: 'time',
-              title: 'Системное время',
-              pinned: false,
-              data: {
-                timestamp: Date.now(),
-                format: '24h',
-                showSeconds: true,
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-              }
-            });
-            soundEffects.playCompletionPing();
+      {/* Discrete Corner Control Bar (Minimal dock) - only visible when HUD is active */}
+      {hudVisible && (
+        <aside
+          id="corner-dock-controls"
+          data-interactive="true"
+          onClick={e => e.stopPropagation()}
+          onMouseEnter={() => electronBridge.setInteractive(true)}
+          className="interactive-ui fixed top-4 right-4 z-40 flex items-center gap-1.5 p-1.5 rounded-xl border shadow-lg backdrop-blur-xl transition-all"
+          style={{
+            backgroundColor: 'rgba(18, 21, 29, 0.8)',
+            borderColor: 'var(--c-border)'
           }}
-          className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
-          title="Открыть окно системного времени (Views: Time)"
         >
-          <Clock className="w-4 h-4" />
-        </button>
+          {/* Fullscreen Toggle */}
+          <button
+            id="dock-fullscreen-btn"
+            onClick={toggleFullscreen}
+            className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
+            title={isFullscreen ? 'Выйти из полноэкранного режима' : 'Развернуть оверлей на весь экран (F11)'}
+          >
+            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
 
-        <button
-          onClick={() => setHudVisible(!hudVisible)}
-          className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
-          title={hudVisible ? 'Скрыть HUD' : 'Показать HUD'}
-        >
-          {hudVisible ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-        </button>
+          {/* Quick standard View: Time */}
+          <button
+            id="dock-quick-time-btn"
+            onClick={() => {
+              handleSpawnView({
+                id: `view-time-${Date.now()}`,
+                type: 'time',
+                title: 'Системное время',
+                pinned: false,
+                data: {
+                  timestamp: Date.now(),
+                  format: '24h',
+                  showSeconds: true,
+                  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                }
+              });
+              soundEffects.playCompletionPing();
+            }}
+            className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
+            title="Открыть окно системного времени (Views: Time)"
+          >
+            <Clock className="w-4 h-4" />
+          </button>
 
-        <button
-          onClick={() => openSettings('tools')}
-          className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
-          title="Настройки"
-        >
-          <Settings className="w-4 h-4" />
-        </button>
-      </aside>
+          <button
+            onClick={() => setHudVisible(false)}
+            className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
+            title="Скрыть весь интерфейс (Alt + Space)"
+          >
+            <Eye className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => openSettings('tools')}
+            className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
+            title="Настройки"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        </aside>
+      )}
 
       {/* Separate Settings & Info Window */}
       <SettingsModal
