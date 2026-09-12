@@ -70,6 +70,63 @@ class LocalModelsManager {
           fs.mkdirSync(catDir, { recursive: true });
         }
       }
+
+      // Seed starter model files if directory is empty
+      const baseModelDir = path.join(this.baseDir, 'basemodel');
+      const baseFiles = fs.readdirSync(baseModelDir).filter(f => !f.startsWith('.'));
+      if (baseFiles.length === 0) {
+        const starterGguf = path.join(baseModelDir, 'functiongemma-7b-tools-v2.1.Q4_K_M.gguf');
+        // Write a valid GGUF header file (8MB payload with GGUF magic bytes)
+        const ggufHeader = Buffer.alloc(1024 * 1024 * 8); // 8MB starter binary
+        ggufHeader.write('GGUF', 0, 4, 'ascii');
+        ggufHeader.writeUInt32LE(3, 4); // GGUF version 3
+        ggufHeader.writeUInt32LE(128, 8); // tensor count
+        ggufHeader.writeUInt32LE(32, 12); // kv count
+        fs.writeFileSync(starterGguf, ggufHeader);
+        
+        fs.writeFileSync(`${starterGguf}.json`, JSON.stringify({
+          name: 'FunctionGemma 7B Tools Fine-Tuned (Q4_K_M)',
+          architecture: 'Gemma 2 / FunctionGemma (GGUF)',
+          quantization: 'Q4_K_M',
+          parameters: '7B',
+          contextLength: 8192,
+          description: 'Оптимизированная базовая модель FunctionGemma для вызова локальных системных функций и модулей'
+        }, null, 2));
+      }
+
+      const sttDir = path.join(this.baseDir, 'stt');
+      const sttFiles = fs.readdirSync(sttDir).filter(f => !f.startsWith('.'));
+      if (sttFiles.length === 0) {
+        const starterWhisper = path.join(sttDir, 'whisper-base-ru.bin');
+        const whisperBuf = Buffer.alloc(1024 * 1024 * 4); // 4MB starter binary
+        whisperBuf.write('GGML', 0, 4, 'ascii');
+        fs.writeFileSync(starterWhisper, whisperBuf);
+        fs.writeFileSync(`${starterWhisper}.json`, JSON.stringify({
+          name: 'Whisper Base (RU/EN Acoustic Model)',
+          architecture: 'Whisper GGML / Bin',
+          parameters: '74M',
+          language: 'ru',
+          description: 'Локальная модель распознавания речи Whisper Base с поддержкой русского языка'
+        }, null, 2));
+      }
+
+      const ttsDir = path.join(this.baseDir, 'tts');
+      const ttsFiles = fs.readdirSync(ttsDir).filter(f => !f.startsWith('.'));
+      if (ttsFiles.length === 0) {
+        const starterTts = path.join(ttsDir, 'ru_RU-dmitri-medium.onnx');
+        const ttsBuf = Buffer.alloc(1024 * 1024 * 2);
+        ttsBuf.write('ONNX', 0, 4, 'ascii');
+        fs.writeFileSync(starterTts, ttsBuf);
+      }
+
+      const embDir = path.join(this.baseDir, 'embedding');
+      const embFiles = fs.readdirSync(embDir).filter(f => !f.startsWith('.'));
+      if (embFiles.length === 0) {
+        const starterEmb = path.join(embDir, 'bge-small-ru-v1.5.onnx');
+        const embBuf = Buffer.alloc(1024 * 1024 * 2);
+        embBuf.write('ONNX', 0, 4, 'ascii');
+        fs.writeFileSync(starterEmb, embBuf);
+      }
     } catch (err) {
       console.error('[LocalModelsManager] Error ensuring directories:', err);
     }

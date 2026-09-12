@@ -13,12 +13,15 @@ import {
   MicOff,
   History,
   CornerDownLeft,
-  Cpu
+  Cpu,
+  ChevronDown
 } from 'lucide-react';
 import { ModelStatus, ViewSpec } from '../types';
 import { soundEffects } from '../utils/audioEffects';
 import { getSmartQuerySuggestions, SuggestionMatch } from '../utils/fuzzySearch';
 import { electronBridge } from '../utils/electronBridge';
+import { audioDevicesManager, AudioDeviceOption } from '../utils/audioDevices';
+import { AudioVolumeVisualizer } from './ui/AudioVolumeVisualizer';
 
 interface FloatingHudProps {
   status: ModelStatus | null;
@@ -58,10 +61,17 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
   const [selectedSuggestionIdx, setSelectedSuggestionIdx] = useState<number>(-1);
   const [isInputFocused, setIsInputFocused] = useState(false);
 
-  // Voice recording state
+  // Voice recording & microphone state
   const [isRecording, setIsRecording] = useState(false);
+  const [activeAudioStream, setActiveAudioStream] = useState<MediaStream | null>(null);
+  const [audioDevices, setAudioDevices] = useState<AudioDeviceOption[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => audioDevicesManager.getStoredDeviceId());
+  const [showMicMenu, setShowMicMenu] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const speechRecognitionRef = useRef<any>(null);
 
   // Draggable positioning state
   const [position, setPosition] = useState<{ x: number; y: number }>(() => {
@@ -78,6 +88,22 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
   // Auto-focus input
   useEffect(() => {
     inputRef.current?.focus();
+  }, []);
+
+  // Load available microphones
+  useEffect(() => {
+    const loadMics = async () => {
+      const devs = await audioDevicesManager.getAudioInputDevices();
+      setAudioDevices(devs);
+      const stored = audioDevicesManager.getStoredDeviceId();
+      if (stored && devs.some(d => d.deviceId === stored)) {
+        setSelectedDeviceId(stored);
+      } else if (devs.length > 0 && !selectedDeviceId) {
+        setSelectedDeviceId(devs[0].deviceId);
+        audioDevicesManager.setStoredDeviceId(devs[0].deviceId);
+      }
+    };
+    loadMics();
   }, []);
 
   // Update suggestions whenever prompt changes
@@ -257,63 +283,113 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
     inputRef.current?.focus();
   };
 
-  // Local Voice STT handler
+  // Local Voice STT handler with dynamic speech recognition
   const handleToggleVoice = async () => {
     if (isRecording) {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
         mediaRecorderRef.current.stop();
       }
+      if (speechRecognitionRef.current) {
+        try {
+          speechRecognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+        speechRecognitionRef.current = null;
+      }
+      if (activeAudioStream) {
+        activeAudioStream.getTracks().forEach(t => t.stop());
+        setActiveAudioStream(null);
+      }
       setIsRecording(false);
+      setIsSpeaking(false);
       return;
     }
 
     try {
-      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = mediaRecorder;
-        audioChunksRef.current = [];
+      const stream = await audioDevicesManager.getUserMediaWithDevice(selectedDeviceId);
+      setActiveAudioStream(stream);
 
-        mediaRecorder.ondataavailable = event => {
-          if (event.data.size > 0) {
-            audioChunksRef.current.push(event.data);
-          }
-        };
+      // 1. Setup dynamic browser Web Speech API for real-time live transcription if available
+      const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRec) {
+        try {
+          const recognition = new SpeechRec();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = 'ru-RU';
 
-        mediaRecorder.onstop = async () => {
-          stream.getTracks().forEach(track => track.stop());
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          const reader = new FileReader();
-          reader.readAsDataURL(audioBlob);
-          reader.onloadend = async () => {
-            const base64 = (reader.result as string)?.split(',')[1] || '';
-            try {
-              const res = await fetch('/api/stt/transcribe', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ base64Audio: base64, filename: 'voice.webm' })
-              });
-              const data = await res.json();
-              if (data.text) {
-                setPrompt(data.text);
-                soundEffects.playCompletionPing();
-                inputRef.current?.focus();
-              }
-            } catch (err) {
-              console.error('STT error:', err);
-              soundEffects.playWarningCue();
+          recognition.onresult = (event: any) => {
+            let fullText = '';
+            for (let i = 0; i < event.results.length; i++) {
+              fullText += event.results[i][0].transcript;
+            }
+            if (fullText) {
+              setPrompt(fullText);
+              setIsSpeaking(true);
             }
           };
-        };
 
-        mediaRecorder.start();
-        setIsRecording(true);
-        soundEffects.playToolCallCue();
-      } else {
-        soundEffects.playWarningCue();
+          recognition.onerror = (err: any) => {
+            console.warn('[SpeechRec] interim error:', err);
+          };
+
+          recognition.start();
+          speechRecognitionRef.current = recognition;
+        } catch (e) {
+          console.warn('[SpeechRec] could not start live web speech:', e);
+        }
       }
+
+      // 2. Setup MediaRecorder for backend Whisper STT
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = event => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop());
+        setActiveAudioStream(null);
+        setIsRecording(false);
+        setIsSpeaking(false);
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        if (audioBlob.size < 100) return;
+
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = async () => {
+          const base64 = (reader.result as string)?.split(',')[1] || '';
+          try {
+            const res = await fetch('/api/stt/transcribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ base64Audio: base64, filename: 'voice.webm' })
+            });
+            const data = await res.json();
+            if (data.text) {
+              setPrompt(data.text);
+              soundEffects.playCompletionPing();
+              inputRef.current?.focus();
+            }
+          } catch (err) {
+            console.error('STT error:', err);
+            soundEffects.playWarningCue();
+          }
+        };
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      soundEffects.playToolCallCue();
     } catch (err) {
       setIsRecording(false);
+      setActiveAudioStream(null);
       console.error('Audio capture error:', err);
       soundEffects.playWarningCue();
     }
@@ -462,20 +538,83 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               </button>
             )}
 
-            {/* Microphone STT button */}
-            <button
-              type="button"
-              id="hud-voice-btn"
-              onClick={handleToggleVoice}
-              title={isRecording ? 'Остановить запись голоса' : 'Голосовой ввод'}
-              className={`p-1.5 rounded-lg text-xs transition-all ${
-                isRecording
-                  ? 'bg-orange-500 text-white animate-pulse'
-                  : 'text-[var(--c-text-muted)] hover:text-[var(--c-peach)] hover:bg-white/5'
-              }`}
-            >
-              {isRecording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-            </button>
+            {/* Live Audio Visualizer Equalizer Bars while recording */}
+            {isRecording && (
+              <AudioVolumeVisualizer
+                stream={activeAudioStream}
+                isActive={isRecording}
+                barCount={5}
+                showLevelText={false}
+              />
+            )}
+
+            {/* Microphone STT button with device quick switcher */}
+            <div className="relative flex items-center">
+              <button
+                type="button"
+                id="hud-voice-btn"
+                onClick={handleToggleVoice}
+                title={isRecording ? 'Остановить запись голоса' : 'Голосовой ввод'}
+                className={`p-1.5 rounded-lg text-xs transition-all flex items-center gap-1 ${
+                  isRecording
+                    ? 'bg-orange-500 text-white animate-pulse'
+                    : 'text-[var(--c-text-muted)] hover:text-[var(--c-peach)] hover:bg-white/5'
+                }`}
+              >
+                {isRecording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+              </button>
+
+              {audioDevices.length > 1 && !isRecording && (
+                <button
+                  type="button"
+                  onClick={() => setShowMicMenu(!showMicMenu)}
+                  title="Выбрать микрофон"
+                  className="p-1 -ml-1 text-[var(--c-text-dim)] hover:text-[var(--c-peach)]"
+                >
+                  <ChevronDown className="w-2.5 h-2.5" />
+                </button>
+              )}
+
+              {/* Mic Device Selector Dropdown */}
+              {showMicMenu && (
+                <div
+                  className="absolute right-0 top-full mt-2 w-64 p-2 rounded-xl border shadow-2xl z-50 animate-fadeIn text-xs"
+                  style={{
+                    backgroundColor: 'var(--c-bg-secondary)',
+                    borderColor: 'var(--c-border)'
+                  }}
+                >
+                  <div className="text-[10px] font-semibold text-[var(--c-text-dim)] uppercase tracking-wider mb-1 px-1">
+                    Устройство ввода микрофона
+                  </div>
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {audioDevices.map(dev => {
+                      const isSelected = selectedDeviceId === dev.deviceId;
+                      return (
+                        <button
+                          key={dev.deviceId}
+                          type="button"
+                          onClick={() => {
+                            setSelectedDeviceId(dev.deviceId);
+                            audioDevicesManager.setStoredDeviceId(dev.deviceId);
+                            setShowMicMenu(false);
+                            soundEffects.playCompletionPing();
+                          }}
+                          className={`w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between text-[11px] transition-colors ${
+                            isSelected
+                              ? 'bg-[var(--c-peach-surface)] text-[var(--c-peach-light)] font-medium'
+                              : 'hover:bg-white/5 text-[var(--c-text-muted)]'
+                          }`}
+                        >
+                          <span className="truncate pr-1">{dev.label}</span>
+                          {isSelected && <CheckCircle2 className="w-3 h-3 shrink-0 text-[var(--c-peach)]" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Submit arrow button */}
             <button

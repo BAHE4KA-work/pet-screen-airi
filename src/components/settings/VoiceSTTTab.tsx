@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, Check, RotateCw, AlertCircle, Square } from 'lucide-react';
+import { Mic, Check, RotateCw, AlertCircle, Square, MicOff, Volume2 } from 'lucide-react';
 import { STTConfig, LocalModelsOverview } from '../../types';
 import { soundEffects } from '../../utils/audioEffects';
+import { audioDevicesManager, AudioDeviceOption } from '../../utils/audioDevices';
+import { AudioVolumeVisualizer } from '../ui/AudioVolumeVisualizer';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Select } from '../ui/Select';
@@ -10,13 +12,16 @@ import { Input } from '../ui/Input';
 export const VoiceSTTTab: React.FC = () => {
   const [config, setConfig] = useState<STTConfig>({
     endpoint: 'http://localhost:8000/v1/audio/transcriptions',
-    model: 'whisper-base.bin',
-    modelFile: 'whisper-base.bin',
+    model: 'whisper-base-ru.bin',
+    modelFile: 'whisper-base-ru.bin',
     language: 'ru',
     enabled: true,
     useWebSpeechFallback: true
   });
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
+  const [audioDevices, setAudioDevices] = useState<AudioDeviceOption[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => audioDevicesManager.getStoredDeviceId());
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const [saved, setSaved] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [testTranscript, setTestTranscript] = useState<string | null>(null);
@@ -24,6 +29,34 @@ export const VoiceSTTTab: React.FC = () => {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  const loadAudioDevices = async () => {
+    const devices = await audioDevicesManager.getAudioInputDevices();
+    setAudioDevices(devices);
+    const stored = audioDevicesManager.getStoredDeviceId();
+    if (stored && devices.some(d => d.deviceId === stored)) {
+      setSelectedDeviceId(stored);
+    } else if (devices.length > 0 && !selectedDeviceId) {
+      setSelectedDeviceId(devices[0].deviceId);
+      audioDevicesManager.setStoredDeviceId(devices[0].deviceId);
+    }
+  };
+
+  useEffect(() => {
+    loadAudioDevices();
+
+    // Listen for device changes (plugging in new USB mic, headsets)
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', loadAudioDevices);
+      return () => navigator.mediaDevices.removeEventListener('devicechange', loadAudioDevices);
+    }
+  }, []);
+
+  const handleDeviceChange = (deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    audioDevicesManager.setStoredDeviceId(deviceId);
+    soundEffects.playCompletionPing();
+  };
 
   useEffect(() => {
     // Load config
@@ -78,7 +111,9 @@ export const VoiceSTTTab: React.FC = () => {
 
     try {
       audioChunksRef.current = [];
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await audioDevicesManager.getUserMediaWithDevice(selectedDeviceId);
+      setActiveStream(stream);
+
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
@@ -88,6 +123,7 @@ export const VoiceSTTTab: React.FC = () => {
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
+        setActiveStream(null);
         setIsRecording(false);
         setIsTranscribing(true);
 
@@ -112,7 +148,7 @@ export const VoiceSTTTab: React.FC = () => {
               setTestTranscript(data.text);
               soundEffects.playCompletionPing();
             } else {
-              setTestTranscript('(Речь не распознана)');
+              setTestTranscript('(Речь не распознана. Проверьте правильность выбранного микрофона и громкость)');
             }
           };
         } catch {
@@ -125,10 +161,11 @@ export const VoiceSTTTab: React.FC = () => {
       setIsRecording(true);
       setTestTranscript(null);
       soundEffects.playToolCallCue();
-    } catch {
+    } catch (err) {
       setIsRecording(false);
+      setActiveStream(null);
       soundEffects.playWarningCue();
-      setTestTranscript('(Доступ к микрофону недоступен)');
+      setTestTranscript('(Доступ к выбранному микрофону заблокирован или устройство недоступно)');
     }
   };
 
@@ -203,6 +240,42 @@ export const VoiceSTTTab: React.FC = () => {
             </div>
           </div>
 
+          {/* Microphone Device Selection */}
+          <div className="pt-1 border-t border-[var(--c-border)]">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[11px] block" style={{ color: 'var(--c-text-muted)' }}>
+                Устройство ввода (Микрофон):
+              </label>
+              <button
+                type="button"
+                onClick={loadAudioDevices}
+                className="text-[10px] text-[var(--c-peach)] hover:underline flex items-center gap-1"
+              >
+                <RotateCw className="w-3 h-3" />
+                Обновить список устройств
+              </button>
+            </div>
+
+            <Select
+              id="stt-device-select"
+              value={selectedDeviceId}
+              onChange={e => handleDeviceChange(e.target.value)}
+            >
+              {audioDevices.length > 0 ? (
+                audioDevices.map(d => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label}
+                  </option>
+                ))
+              ) : (
+                <option value="">Микрофон по умолчанию (Системный)</option>
+              )}
+            </Select>
+            <span className="text-[10px] text-[var(--c-text-dim)] mt-1 block">
+              Выберите физический микрофон, если звук не улавливается встроенным устройством.
+            </span>
+          </div>
+
           <div className="flex items-center justify-between pt-1">
             <label className="flex items-center gap-2 cursor-pointer select-none text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
               <input
@@ -242,6 +315,21 @@ export const VoiceSTTTab: React.FC = () => {
         >
           {isRecording ? <Square className="w-5 h-5 fill-current" /> : <Mic className="w-6 h-6" />}
         </button>
+
+        {/* Live Audio Visualizer Equalizer Bars */}
+        {isRecording && (
+          <div className="flex flex-col items-center gap-1.5 animate-fadeIn">
+            <AudioVolumeVisualizer
+              stream={activeStream}
+              isActive={isRecording}
+              barCount={8}
+              showLevelText={true}
+            />
+            <span className="text-[11px] text-[var(--c-mint-light)]">
+              Индикатор уровня громкости активен. Говорите в микрофон...
+            </span>
+          </div>
+        )}
 
         {/* Status or Transcript Text Under the Button */}
         <div className="min-h-[24px] max-w-md">

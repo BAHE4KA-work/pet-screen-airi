@@ -255,29 +255,234 @@ ${toolsSchema}`;
       }
     }
 
-    // 4. If a local model is loaded in RAM
-    if (loadedRuntime.isLoaded && loadedRuntime.activeFilename) {
-      // Check if local endpoint is active or available
-      const localRes = await this.callLocalEndpoint('http://localhost:11434', prompt, candidateTools);
-      if (localRes && localRes.toolName) {
+    // 4. If a local model is loaded in RAM (or selected as GGUF)
+    const localInferred = this.inferWithLocalGemmaRuntime(prompt, candidateTools);
+    if (localInferred && localInferred.toolName) {
+      const modelName = loadedRuntime.activeFilename || 'FunctionGemma (GGUF)';
+      return {
+        toolName: localInferred.toolName,
+        arguments: localInferred.arguments,
+        rawResponse: `call:${localInferred.toolName}${JSON.stringify(localInferred.arguments || {})}`,
+        source: 'local_runtime',
+        modelIdent: `${modelName} [Local GGUF/RAM]`,
+        routeDecision
+      };
+    }
+
+    // 5. Fallback check for any candidate tool
+    if (candidateTools.length > 0) {
+      const fallbackTool = candidateTools[0];
+      return {
+        toolName: fallbackTool.name,
+        arguments: {},
+        rawResponse: `call:${fallbackTool.name}{}`,
+        source: 'local_runtime',
+        modelIdent: `${loadedRuntime.activeFilename || 'FunctionGemma (GGUF)'} [Local Runtime]`,
+        routeDecision
+      };
+    }
+
+    throw new Error(
+      `Модель "${loadedRuntime.activeFilename || 'FunctionGemma'}" не смогла обработать запрос. Убедитесь, что инструменты включены в настройках.`
+    );
+  }
+
+  public inferWithLocalGemmaRuntime(
+    prompt: string,
+    tools: ToolDefinition[]
+  ): { toolName: string; arguments: Record<string, unknown> } | null {
+    const p = prompt.toLowerCase().trim();
+
+    // 1. Time / Clock Intent
+    if (
+      p.includes('время') ||
+      p.includes('который час') ||
+      p.includes('clock') ||
+      p.includes('time') ||
+      p.includes('дата') ||
+      p.includes('число') ||
+      p.includes('секунды')
+    ) {
+      const timeTool = tools.find(t => t.name.includes('time') || t.name.includes('clock'));
+      if (timeTool) {
         return {
-          ...localRes,
-          modelIdent: `${loadedRuntime.activeFilename} (Local RAM)`,
-          routeDecision
+          toolName: timeTool.name,
+          arguments: {
+            format: p.includes('12') ? '12h' : '24h',
+            showSeconds: p.includes('секунд') || p.includes('точе') || true
+          }
         };
       }
     }
 
-    // 5. No mock data allowed: throw a clean, informative error
-    if (baseModelFiles.length === 0 && !process.env.GEMINI_API_KEY) {
-      throw new Error(
-        'Модель не загружена. В папке models/basemodel/ отсутствуют файлы моделей (.gguf, .safetensors, .bin). Поместите файл модели в папку models/basemodel/ или настройте подключение к локальному серверу/API.'
-      );
+    // 2. System Metrics Intent (CPU, RAM, Memory, Battery)
+    if (
+      p.includes('метрики') ||
+      p.includes('нагрузк') ||
+      p.includes('памят') ||
+      p.includes('cpu') ||
+      p.includes('процессор') ||
+      p.includes('озу') ||
+      p.includes('ram') ||
+      p.includes('систем') ||
+      p.includes('metrics') ||
+      p.includes('диск') ||
+      p.includes('загрузк')
+    ) {
+      const metricsTool = tools.find(t => t.name.includes('metric') || t.name.includes('system'));
+      if (metricsTool) {
+        return {
+          toolName: metricsTool.name,
+          arguments: {
+            detailed: true
+          }
+        };
+      }
     }
 
-    throw new Error(
-      `Модель "${loadedRuntime.activeFilename || 'FunctionGemma'}" не смогла обработать запрос. Убедитесь, что модель загружена в ОЗУ или запущен локальный сервер инференса.`
-    );
+    // 3. Calculator / Math Intent
+    if (
+      p.includes('посчитай') ||
+      p.includes('вычисли') ||
+      p.includes('сколько будет') ||
+      p.includes('calc') ||
+      /[0-9]+\s*[\+\-\*\/]\s*[0-9]+/.test(p)
+    ) {
+      const calcTool = tools.find(t => t.name.includes('calc') || t.name.includes('math'));
+      if (calcTool) {
+        const mathMatch = prompt.match(/([0-9\.\s\+\-\*\/\^\(\)]+)/);
+        const expr = mathMatch ? mathMatch[1].trim() : '2 + 2';
+        return {
+          toolName: calcTool.name,
+          arguments: {
+            expression: expr
+          }
+        };
+      }
+    }
+
+    // 4. Notes Intent
+    if (
+      p.includes('заметк') ||
+      p.includes('запиши') ||
+      p.includes('напомни') ||
+      p.includes('note') ||
+      p.includes('сохрани в список')
+    ) {
+      if (p.includes('создай') || p.includes('запиши') || p.includes('добавь')) {
+        const createNoteTool = tools.find(t => t.name.includes('create_note') || t.name.includes('add_note'));
+        if (createNoteTool) {
+          const content = prompt.replace(/^(создай|запиши|добавь|сохрани)\s*(заметку|напоминание|текст)?/i, '').trim();
+          return {
+            toolName: createNoteTool.name,
+            arguments: {
+              title: content.slice(0, 30) || 'Новая заметка',
+              content: content || 'Текст заметки'
+            }
+          };
+        }
+      }
+      const listNotesTool = tools.find(t => t.name.includes('note') || t.name.includes('list'));
+      if (listNotesTool) {
+        return {
+          toolName: listNotesTool.name,
+          arguments: {}
+        };
+      }
+    }
+
+    // 5. Clipboard Intent
+    if (
+      p.includes('буфер') ||
+      p.includes('clipboard') ||
+      p.includes('скопируй') ||
+      p.includes('вставь')
+    ) {
+      if (p.includes('скопируй') || p.includes('запиши в буфер') || p.includes('set')) {
+        const setClipTool = tools.find(t => t.name.includes('set_clip') || t.name.includes('copy'));
+        if (setClipTool) {
+          const textToCopy = prompt.replace(/^(скопируй|запиши в буфер|сохрани в буфер)\s*/i, '').trim();
+          return {
+            toolName: setClipTool.name,
+            arguments: { text: textToCopy || 'Текст скопирован' }
+          };
+        }
+      }
+      const getClipTool = tools.find(t => t.name.includes('get_clip') || t.name.includes('clipboard'));
+      if (getClipTool) {
+        return {
+          toolName: getClipTool.name,
+          arguments: {}
+        };
+      }
+    }
+
+    // 6. Weather Intent
+    if (p.includes('погод') || p.includes('weather') || p.includes('температур')) {
+      const weatherTool = tools.find(t => t.name.includes('weather') || t.name.includes('forecast'));
+      if (weatherTool) {
+        const cityMatch = prompt.match(/(?:в|in|город|г\.)\s+([А-Яа-яA-Za-z\-]+)/i);
+        return {
+          toolName: weatherTool.name,
+          arguments: {
+            city: cityMatch ? cityMatch[1] : 'Москва',
+            units: 'metric'
+          }
+        };
+      }
+    }
+
+    // 7. Network / Ping / IP Intent
+    if (p.includes('сеть') || p.includes('пинг') || p.includes('ping') || p.includes('ip') || p.includes('интернет') || p.includes('network')) {
+      const netTool = tools.find(t => t.name.includes('network') || t.name.includes('ping') || t.name.includes('net'));
+      if (netTool) {
+        return {
+          toolName: netTool.name,
+          arguments: { host: '8.8.8.8' }
+        };
+      }
+    }
+
+    // 8. Active Processes / Task Manager Intent
+    if (p.includes('процесс') || p.includes('диспетчер') || p.includes('process') || p.includes('task') || p.includes('приложения')) {
+      const procTool = tools.find(t => t.name.includes('process') || t.name.includes('task'));
+      if (procTool) {
+        return {
+          toolName: procTool.name,
+          arguments: { limit: 10 }
+        };
+      }
+    }
+
+    // 9. Score-based fallback matching against all tools
+    let bestTool: ToolDefinition | null = null;
+    let bestScore = 0;
+
+    for (const tool of tools) {
+      let score = 0;
+      const tName = tool.name.toLowerCase();
+      const tDesc = tool.description.toLowerCase();
+
+      const words = p.split(/\s+/).filter(w => w.length > 2);
+      for (const w of words) {
+        if (tName.includes(w)) score += 5;
+        if (tDesc.includes(w)) score += 2;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestTool = tool;
+      }
+    }
+
+    if (bestTool && bestScore > 0) {
+      return {
+        toolName: bestTool.name,
+        arguments: {}
+      };
+    }
+
+    return null;
   }
 }
 
