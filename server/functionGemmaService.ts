@@ -1,6 +1,16 @@
+import { GoogleGenAI } from '@google/genai';
 import { modulesRegistry } from './modulesRegistry';
 import { modelRouterService, RouteDecision } from './modelRouter';
 import { ToolDefinition } from '../src/types';
+
+let geminiClient: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI | null {
+  if (!process.env.GEMINI_API_KEY) return null;
+  if (!geminiClient) {
+    geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+  return geminiClient;
+}
 
 export interface FunctionGemmaCallResult {
   toolName?: string;
@@ -341,6 +351,50 @@ ${toolsSchema}`;
     };
   }
 
+  public async callGemini(
+    prompt: string,
+    activeTools: ToolDefinition[]
+  ): Promise<FunctionGemmaCallResult | null> {
+    const ai = getGeminiClient();
+    if (!ai) return null;
+
+    try {
+      const toolsSchema = this.formatGemmaToolsSchema(activeTools);
+      const systemInstruction = `You are FunctionGemma, a function calling model for a personal desktop assistant.
+Select the single best tool to invoke for the user's prompt.
+Output strictly in the following call signature format:
+call:tool_name{"param": "value"}
+
+Available registered tools schema:
+${toolsSchema}`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+          systemInstruction,
+          temperature: 0.1
+        }
+      });
+
+      const rawText = response.text || '';
+      const parsed = this.parseGemmaResponse(rawText);
+      if (parsed.toolName) {
+        return {
+          toolName: parsed.toolName,
+          arguments: parsed.arguments,
+          rawResponse: rawText,
+          source: 'local_endpoint',
+          modelIdent: 'Gemini 2.5 Flash'
+        };
+      }
+      return null;
+    } catch (err) {
+      console.warn('Gemini inference error, falling back to simulator:', err);
+      return null;
+    }
+  }
+
   public async inferAndCallTool(prompt: string): Promise<FunctionGemmaCallResult> {
     const routeDecision = modelRouterService.routeQuery(prompt);
     const assignedModules = routeDecision.selectedModel.moduleIds;
@@ -368,7 +422,18 @@ ${toolsSchema}`;
       }
     }
 
-    // 2. Use built-in offline engine fallback
+    // 2. If GEMINI_API_KEY is available, use Gemini
+    if (process.env.GEMINI_API_KEY) {
+      const geminiRes = await this.callGemini(prompt, candidateTools);
+      if (geminiRes && geminiRes.toolName) {
+        return {
+          ...geminiRes,
+          routeDecision
+        };
+      }
+    }
+
+    // 3. Use built-in offline engine fallback
     const simRes = await this.simulateFunctionGemma(prompt, candidateTools);
     return {
       ...simRes,
