@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+*.gguf
+*.safetensor
+models/*.bin
+models/
