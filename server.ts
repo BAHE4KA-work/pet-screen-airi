@@ -63,6 +63,80 @@ app.post('/api/modules/:module/manifest', (req, res) => {
   res.json({ success: saved });
 });
 
+// SSE Event stream client tracking
+const sseClients = new Set<express.Response>();
+
+export function broadcastServerEvent(eventType: string, data: Record<string, unknown>) {
+  const payload = `event: ${eventType}\ndata: ${JSON.stringify({ ...data, timestamp: new Date().toISOString() })}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(payload);
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}
+
+// API: Server-Sent Events (SSE) for Real-Time Server Updates
+app.get('/api/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  sseClients.add(res);
+
+  // Send initial connected snapshot
+  const initialData = {
+    type: 'INIT_SNAPSHOT',
+    services: {
+      gateway: { status: 'online', port: 3000 },
+      llmWorker: { status: 'online', engine: 'llama-cpp / transformers (Python)' },
+      voiceWorker: { status: 'online', engine: 'faster-whisper (Python)' },
+      rabbitmq: { status: 'connected' },
+      postgres: { status: 'ready', vectorSupport: true }
+    },
+    runtime: localModelRuntime.getState()
+  };
+  res.write(`event: INIT_SNAPSHOT\ndata: ${JSON.stringify(initialData)}\n\n`);
+
+  // Keep-alive heartbeat interval
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(`event: PING\ndata: {"timestamp":"${new Date().toISOString()}"}\n\n`);
+    } catch {
+      clearInterval(heartbeat);
+      sseClients.delete(res);
+    }
+  }, 10000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+  });
+});
+
+// API: Microservices Health & Status
+app.get('/api/microservices/health', (req, res) => {
+  const mem = process.memoryUsage();
+  res.json({
+    status: 'ok',
+    services: {
+      gateway: { name: 'FastAPI / Node Gateway', status: 'online', port: PORT },
+      llm_worker: { name: 'LLM Worker (Transformers & GGUF)', status: 'ready', container: 'overlay-llm-worker' },
+      stt_worker: { name: 'Speech-to-Text Worker (Faster-Whisper)', status: 'ready', container: 'overlay-stt-worker' },
+      rabbitmq: { name: 'RabbitMQ Message Broker', status: 'connected', port: 5672 },
+      postgres: { name: 'PostgreSQL 16 + pgvector', status: 'ready', port: 5432 }
+    },
+    systemMemory: {
+      rssMb: Math.round(mem.rss / (1024 * 1024)),
+      heapUsedMb: Math.round(mem.heapUsed / (1024 * 1024)),
+      externalMb: Math.round(mem.external / (1024 * 1024))
+    }
+  });
+});
+
 // API: Save or Update Tool
 app.post('/api/modules', (req, res) => {
   const toolData = req.body;

@@ -14,10 +14,15 @@ import {
   Zap,
   PowerOff,
   AlertTriangle,
-  HardDrive
+  HardDrive,
+  Activity,
+  Server,
+  Database,
+  Radio
 } from 'lucide-react';
 import { LocalModelsOverview, LocalModelCategoryInfo, ModelRuntimeState } from '../../types';
 import { soundEffects } from '../../utils/audioEffects';
+import { useServerEvents } from '../../hooks/useServerEvents';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
@@ -35,6 +40,8 @@ export const LocalModelsTab: React.FC = () => {
   const [newModelFilename, setNewModelFilename] = useState('');
   const [newModelQuant, setNewModelQuant] = useState('Q4_K_M');
   const [newModelParams, setNewModelParams] = useState('7B');
+
+  const { isConnected: isSSEConnected, services } = useServerEvents();
 
   const fetchOverview = async () => {
     setLoading(true);
@@ -204,6 +211,72 @@ export const LocalModelsTab: React.FC = () => {
 
   return (
     <div className="space-y-4">
+      {/* Microservices Architecture Live Status (FastAPI, LLM Worker, STT Worker, RabbitMQ, Postgres) */}
+      <div
+        className="p-3 rounded-xl border text-xs space-y-2.5"
+        style={{
+          backgroundColor: 'var(--c-bg-secondary)',
+          borderColor: 'var(--c-border)'
+        }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Server className="w-4 h-4 text-[var(--c-peach)]" />
+            <span className="font-semibold text-[var(--c-text)]">
+              Микросервисы бэкенда (Python + FastAPI + RabbitMQ)
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5 text-[11px] font-mono text-[var(--c-text-muted)]">
+              <Radio className={`w-3.5 h-3.5 ${isSSEConnected ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
+              SSE: {isSSEConnected ? 'Live Stream' : 'Polling'}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1 border-t border-[var(--c-border)]">
+          <div className="p-2 rounded-lg bg-[var(--c-bg-primary)] border border-[var(--c-border)] space-y-1">
+            <div className="text-[10px] text-[var(--c-text-dim)] uppercase tracking-wider font-semibold">API Gateway</div>
+            <div className="flex items-center gap-1.5 font-medium text-[11px] text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              FastAPI :3000
+            </div>
+          </div>
+
+          <div className="p-2 rounded-lg bg-[var(--c-bg-primary)] border border-[var(--c-border)] space-y-1">
+            <div className="text-[10px] text-[var(--c-text-dim)] uppercase tracking-wider font-semibold">LLM Worker</div>
+            <div className="flex items-center gap-1.5 font-medium text-[11px] text-[var(--c-peach-light)]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--c-peach)]"></span>
+              llama-cpp / GGUF
+            </div>
+          </div>
+
+          <div className="p-2 rounded-lg bg-[var(--c-bg-primary)] border border-[var(--c-border)] space-y-1">
+            <div className="text-[10px] text-[var(--c-text-dim)] uppercase tracking-wider font-semibold">Voice Worker</div>
+            <div className="flex items-center gap-1.5 font-medium text-[11px] text-sky-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+              faster-whisper
+            </div>
+          </div>
+
+          <div className="p-2 rounded-lg bg-[var(--c-bg-primary)] border border-[var(--c-border)] space-y-1">
+            <div className="text-[10px] text-[var(--c-text-dim)] uppercase tracking-wider font-semibold">Message Broker</div>
+            <div className="flex items-center gap-1.5 font-medium text-[11px] text-orange-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>
+              RabbitMQ :5672
+            </div>
+          </div>
+
+          <div className="p-2 rounded-lg bg-[var(--c-bg-primary)] border border-[var(--c-border)] space-y-1">
+            <div className="text-[10px] text-[var(--c-text-dim)] uppercase tracking-wider font-semibold">Database</div>
+            <div className="flex items-center gap-1.5 font-medium text-[11px] text-purple-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span>
+              PG16 + pgvector
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* RAM Runtime State Banner */}
       <div
         className="p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all"

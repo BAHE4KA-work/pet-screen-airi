@@ -1,84 +1,123 @@
+version: '3.8'
+
 services:
-  # 1. Main FunctionGemma Overlay Application
-  app:
+  # ==========================================================
+  # 1. API GATEWAY & DESKTOP OVERLAY
+  # ==========================================================
+  gateway:
     build:
       context: .
       dockerfile: Dockerfile
-      network: host
-    container_name: functiongemma-app
+    container_name: overlay-gateway
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - STORAGE_PATH=/app/storage
-      - MODELS_PATH=/app/models
-      - LOCAL_LLM_ENDPOINT=http://functiongemma-llm:11434
-      - LOCAL_STT_ENDPOINT=http://stt-whisper:8000/v1/audio/transcriptions
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/overlay_db
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - MODELS_PATH=/models
+      - LOG_LEVEL=DEBUG
     volumes:
-      - app-storage:/app/storage
-      - ./models:/app/models
+      - ./storage:/app/storage
+      - ./models:/models
+    depends_on:
+      - postgres
+      - rabbitmq
     networks:
-      - functiongemma-net
+      - overlay-net
 
-  # 2. Local Function Calling LLM Service (Ollama / vLLM)
-  functiongemma-llm:
-    image: ollama/ollama:latest
-    container_name: functiongemma-llm
+  # ==========================================================
+  # 2. DEDICATED LLM INFERENCE WORKER (Transformers & GGUF)
+  # ==========================================================
+  llm-service:
+    build:
+      context: .
+      dockerfile: services/llm_worker/Dockerfile
+    container_name: overlay-llm-worker
     restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-models:/root/.ollama
-      - ./models/basemodel:/models/basemodel
     environment:
-      - OLLAMA_KEEP_ALIVE=24h
-      - OLLAMA_NUM_PARALLEL=4
-    networks:
-      - functiongemma-net
-
-  # 3. Local Speech-to-Text Service (Faster-Whisper OpenAI API)
-  stt-whisper:
-    image: fedirz/faster-whisper-server:latest-cpu
-    container_name: functiongemma-stt
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    environment:
-      - WHISPER_MODEL=base
-      - WHISPER_LANGUAGE=ru
-      - WHISPER_DEVICE=cpu
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - MODELS_PATH=/models
+      - LOG_LEVEL=DEBUG
     volumes:
-      - whisper-models:/root/.cache/huggingface
-      - ./models/stt:/models/stt
+      - ./models:/models:ro
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+    depends_on:
+      - rabbitmq
     networks:
-      - functiongemma-net
+      - overlay-net
 
-  # 4. Optional Internal Multi-Protocol Network Proxy (SOCKS5, HTTP, HTTPS, Shadowsocks)
-  network-proxy:
-    image: ginuerzh/gost:latest
-    container_name: functiongemma-proxy
+  # ==========================================================
+  # 3. DEDICATED SPEECH-TO-TEXT WORKER (Faster-Whisper & VAD)
+  # ==========================================================
+  stt-service:
+    build:
+      context: .
+      dockerfile: services/voice_worker/Dockerfile
+    container_name: overlay-stt-worker
     restart: unless-stopped
-    command: >
-      -L=http://:8080
-      -L=socks5://:1080
-      -L=ss://AEAD_CHACHA20_POLY1305:proxy_secret_key@:8388
-    ports:
-      - "8080:8080" # HTTP/HTTPS Proxy
-      - "1080:1080" # SOCKS5 Proxy
-      - "8388:8388" # Shadowsocks Proxy
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - MODELS_PATH=/models
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./models:/models:ro
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+    depends_on:
+      - rabbitmq
     networks:
-      - functiongemma-net
+      - overlay-net
+
+  # ==========================================================
+  # 4. MESSAGE BROKER (RABBITMQ)
+  # ==========================================================
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: overlay-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"    # AMQP protocol
+      - "15672:15672"  # Web Management UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - overlay-net
+
+  # ==========================================================
+  # 5. DATABASE (POSTGRESQL 16 + PGVECTOR)
+  # ==========================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: overlay-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=overlay_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - overlay-net
 
 networks:
-  functiongemma-net:
+  overlay-net:
     driver: bridge
 
 volumes:
-  app-storage:
+  rabbitmq-data:
     driver: local
-  ollama-models:
-    driver: local
-  whisper-models:
+  postgres-data:
     driver: local
