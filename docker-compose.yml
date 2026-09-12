@@ -13,10 +13,12 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - STORAGE_PATH=/app/storage
+      - MODELS_PATH=/app/models
       - LOCAL_LLM_ENDPOINT=http://functiongemma-llm:11434
       - LOCAL_STT_ENDPOINT=http://stt-whisper:8000/v1/audio/transcriptions
     volumes:
       - app-storage:/app/storage
+      - ./models:/app/models
     networks:
       - functiongemma-net
 
@@ -29,6 +31,7 @@ services:
       - "11434:11434"
     volumes:
       - ollama-models:/root/.ollama
+      - ./models/basemodel:/models/basemodel
     environment:
       - OLLAMA_KEEP_ALIVE=24h
       - OLLAMA_NUM_PARALLEL=4
@@ -48,6 +51,7 @@ services:
       - WHISPER_DEVICE=cpu
     volumes:
       - whisper-models:/root/.cache/huggingface
+      - ./models/stt:/models/stt
     networks:
       - functiongemma-net
 

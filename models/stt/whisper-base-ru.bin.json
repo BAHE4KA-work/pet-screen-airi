@@ -1,0 +1,12 @@
+{
+  "name": "Whisper-Base-Russian",
+  "filename": "whisper-base-ru.bin",
+  "category": "stt",
+  "architecture": "whisper",
+  "parameters": "74M",
+  "quantization": "int8",
+  "language": "ru",
+  "description": "Оптимизированная модель Faster-Whisper для русского языка. Задержка распознавания 200-400 мс на CPU.",
+  "recommendedRAM": "1.0 GB",
+  "isDefault": true
+}

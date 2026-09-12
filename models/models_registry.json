@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "updatedAt": "2026-09-12T14:00:00.000Z",
+  "activeSelections": {
+    "basemodel": "functiongemma-7b-tools-v2.1.Q4_K_M.gguf.json",
+    "stt": "whisper-base-ru.bin.json",
+    "tts": "ru_RU-dmitri-medium.onnx.json",
+    "embedding": "bge-small-ru-v1.5.onnx.json"
+  }
+}

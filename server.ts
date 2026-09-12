@@ -8,6 +8,7 @@ import { functionGemmaService } from './server/functionGemmaService';
 import { storageService } from './server/storageService';
 import { sttService } from './server/sttService';
 import { modelRouterService } from './server/modelRouter';
+import { localModelsManager } from './server/localModelsManager';
 
 dotenv.config();
 
@@ -423,6 +424,43 @@ app.post('/api/models/autoroute', (req, res) => {
 app.post('/api/models/clusters', (req, res) => {
   const updated = modelRouterService.updateCluster(req.body);
   res.json({ success: true, cluster: updated, clusters: modelRouterService.getClusters() });
+});
+
+// API: Local Model Store (/models folder)
+app.get('/api/models/local', (req, res) => {
+  const overview = localModelsManager.scanModels();
+  res.json(overview);
+});
+
+app.post('/api/models/local/scan', (req, res) => {
+  const overview = localModelsManager.scanModels();
+  res.json(overview);
+});
+
+app.post('/api/models/local/select', (req, res) => {
+  const { category, model } = req.body;
+  if (!category || !model) {
+    res.status(400).json({ error: 'Укажите категорию и идентификатор модели.' });
+    return;
+  }
+  const result = localModelsManager.setActiveModel(category, model);
+
+  // If STT model changed, sync with sttService
+  if (category === 'stt') {
+    sttService.setConfig({ model });
+  }
+
+  res.json({ success: true, ...result, overview: localModelsManager.scanModels() });
+});
+
+app.post('/api/models/local/descriptor', (req, res) => {
+  const { category, filename, descriptor } = req.body;
+  if (!category || !filename || !descriptor) {
+    res.status(400).json({ error: 'Недостаточно данных для создания дескриптора.' });
+    return;
+  }
+  const result = localModelsManager.createModelDescriptor(category, filename, descriptor);
+  res.json({ success: true, ...result, overview: localModelsManager.scanModels() });
 });
 
 // API: Execution Logs

@@ -1,0 +1,13 @@
+{
+  "name": "FunctionGemma-7B-Tools-v2.1",
+  "filename": "functiongemma-7b-tools-v2.1.Q4_K_M.gguf",
+  "category": "basemodel",
+  "architecture": "gemma",
+  "parameters": "7.2B",
+  "quantization": "Q4_K_M",
+  "contextLength": 8192,
+  "description": "Основная модель для точного распознавания и вызова инструментов (Function Calling) с русскоязычными системными промптами.",
+  "recommendedVRAM": "5.2 GB",
+  "recommendedRAM": "8.0 GB",
+  "isDefault": true
+}

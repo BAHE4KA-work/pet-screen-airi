@@ -1,0 +1,11 @@
+{
+  "name": "BGE-Small-Russian-v1.5",
+  "filename": "bge-small-ru-v1.5.onnx",
+  "category": "embedding",
+  "architecture": "bert",
+  "parameters": "33M",
+  "dimensions": 384,
+  "maxTokens": 512,
+  "description": "Специализированная модель векторных эмбеддингов для русского языка. Используется для семантического ранжирования инструментов и RAG.",
+  "isDefault": true
+}

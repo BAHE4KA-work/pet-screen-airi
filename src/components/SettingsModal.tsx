@@ -39,6 +39,7 @@ import { StorageSettingsTab } from './settings/StorageSettingsTab';
 import { ModelRouterTab } from './settings/ModelRouterTab';
 import { VoiceSTTTab } from './settings/VoiceSTTTab';
 import { DockerDeployTab } from './settings/DockerDeployTab';
+import { LocalModelsTab } from './settings/LocalModelsTab';
 import { soundEffects } from '../utils/audioEffects';
 
 interface SettingsModalProps {
@@ -139,6 +140,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const tabs = [
     { id: 'tools', label: 'Инструменты', icon: Wrench },
+    { id: 'local_models', label: 'Каталог моделей', icon: Layers },
     { id: 'storage', label: 'Хранилище', icon: HardDrive },
     { id: 'routing', label: 'Маршрутизация', icon: Network },
     { id: 'voice', label: 'Голос (STT)', icon: Mic },
@@ -995,6 +997,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
             )}
+
+            {/* LOCAL MODELS CATALOG TAB */}
+            {activeTab === 'local_models' && <LocalModelsTab />}
 
             {/* STORAGE TAB */}
             {activeTab === 'storage' && <StorageSettingsTab />}

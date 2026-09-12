@@ -239,3 +239,41 @@ export interface AppSettings {
   sttConfig: STTConfig;
 }
 
+export type ModelCategoryKey = 'basemodel' | 'stt' | 'tts' | 'embedding' | string;
+
+export interface LocalModelFile {
+  id: string;
+  filename: string;
+  category: ModelCategoryKey;
+  relativePath: string;
+  format: 'GGUF' | 'ONNX' | 'SafeTensors' | 'PyTorch' | 'Bin' | 'Descriptor' | 'Other';
+  sizeBytes: number;
+  sizeFormatted: string;
+  quantization?: string;
+  parameters?: string;
+  architecture?: string;
+  description?: string;
+  isActive: boolean;
+  updatedAt: string;
+}
+
+export interface LocalModelCategoryInfo {
+  name: string;
+  key: ModelCategoryKey;
+  description: string;
+  recommendedFormats: string[];
+  count: number;
+  activeModelId?: string;
+  files: LocalModelFile[];
+}
+
+export interface LocalModelsOverview {
+  baseDir: string;
+  exists: boolean;
+  totalFiles: number;
+  totalSizeBytes: number;
+  totalSizeFormatted: string;
+  categories: Record<string, LocalModelCategoryInfo>;
+  activeSelections: Record<string, string>;
+}
+
