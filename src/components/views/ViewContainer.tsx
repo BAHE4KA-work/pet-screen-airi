@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { Pin, X, GripHorizontal } from 'lucide-react';
 import { soundEffects } from '../../utils/audioEffects';
+import { electronBridge } from '../../utils/electronBridge';
 
 interface ViewContainerProps {
   id: string;
@@ -74,6 +75,7 @@ export const ViewContainer: React.FC<ViewContainerProps> = ({
   return (
     <div
       id={`view-window-${id}`}
+      data-interactive="true"
       style={{
         left: `${position.x}px`,
         top: `${position.y}px`,
@@ -81,8 +83,12 @@ export const ViewContainer: React.FC<ViewContainerProps> = ({
         maxWidth: 'calc(100vw - 32px)'
       }}
       onClick={e => e.stopPropagation()}
-      onMouseDown={e => e.stopPropagation()}
-      className="fixed z-40 transition-shadow duration-200 select-none animate-in fade-in zoom-in-95"
+      onMouseDown={e => {
+        electronBridge.setInteractive(true);
+        e.stopPropagation();
+      }}
+      onMouseEnter={() => electronBridge.setInteractive(true)}
+      className="view-window interactive-ui fixed z-40 transition-shadow duration-200 select-none animate-in fade-in zoom-in-95"
     >
       <div
         className={`rounded-2xl border backdrop-blur-2xl overflow-hidden shadow-2xl transition-all ${

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { electronBridge } from '../utils/electronBridge';
 import {
   X,
   Wrench,
@@ -131,6 +132,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [selectedToolId, tools]);
 
+  useEffect(() => {
+    if (isOpen) {
+      electronBridge.setInteractive(true);
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const conflict = status?.conflict;
@@ -193,10 +200,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-md animate-fade-in">
+    <div
+      data-interactive="true"
+      onMouseEnter={() => electronBridge.setInteractive(true)}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-md animate-fade-in"
+    >
       {/* Settings Window Frame (Apple-inspired rounded-2xl with clean hierarchy) */}
       <div
         id="settings-modal-window"
+        data-interactive="true"
+        onMouseEnter={() => electronBridge.setInteractive(true)}
         className="relative w-full max-w-4xl h-[640px] max-h-[90vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden text-sm"
         style={{
           backgroundColor: 'var(--c-bg-secondary)',

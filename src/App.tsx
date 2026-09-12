@@ -46,11 +46,106 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState('tools');
 
-  // Fullscreen and Real Overlay Preferences
+  // Real Overlay & Fullscreen Preferences
+  const isOverlayMode = electronBridge.isElectron();
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [desktopOpacity, setDesktopOpacity] = useState(0.4);
-  const [showDesktop, setShowDesktop] = useState(true);
+  // In Electron overlay mode, disable fake desktop background so real host screen is seen
+  const [showDesktop, setShowDesktop] = useState(!isOverlayMode);
   const [showSimulatedMockup, setShowSimulatedMockup] = useState(false);
+
+  // Set transparency class on document for overlay mode
+  useEffect(() => {
+    if (isOverlayMode) {
+      document.documentElement.classList.add('is-overlay-mode');
+      document.body.classList.add('is-overlay-transparent');
+    }
+  }, [isOverlayMode]);
+
+  // Dynamic Electron click-through / interactivity management
+  useEffect(() => {
+    if (!electronBridge.isElectron()) return;
+
+    let isInteractiveCurrent: boolean | null = null;
+
+    const setInteractivity = (shouldBeInteractive: boolean) => {
+      if (shouldBeInteractive !== isInteractiveCurrent) {
+        isInteractiveCurrent = shouldBeInteractive;
+        electronBridge.setInteractive(shouldBeInteractive);
+      }
+    };
+
+    const updateInteractivity = (clientX: number, clientY: number) => {
+      // If modal is open, always keep window interactive
+      if (settingsOpen) {
+        setInteractivity(true);
+        return;
+      }
+
+      // Check element directly under cursor coordinates
+      const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+      if (!target) {
+        setInteractivity(false);
+        return;
+      }
+
+      // Check if element is part of interactive UI
+      const isInteractiveElement = Boolean(
+        target.closest('#floating-hud-window') ||
+        target.closest('.view-window') ||
+        target.closest('[id^="view-window-"]') ||
+        target.closest('#corner-dock-controls') ||
+        target.closest('#settings-modal-window') ||
+        target.closest('#summon-hud-eye-btn') ||
+        target.closest('button, input, textarea, a, select, [role="button"]') ||
+        target.dataset.interactive === 'true' ||
+        target.getAttribute('data-interactive') === 'true'
+      );
+
+      // Check if target is explicitly workspace surface / empty background
+      const isWorkspace =
+        target.id === 'workspace-layer' ||
+        target.id === 'app-root-container' ||
+        target.id === 'desktop-background-layer' ||
+        target.dataset.workspace === 'true' ||
+        target.classList.contains('workspace-surface') ||
+        target === document.body ||
+        target === document.documentElement;
+
+      const shouldBeInteractive = isInteractiveElement && !isWorkspace;
+      setInteractivity(shouldBeInteractive);
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      updateInteractivity(e.clientX, e.clientY);
+    };
+
+    const handleMouseLeave = () => {
+      if (!settingsOpen) {
+        setInteractivity(false);
+      }
+    };
+
+    const handleFocusIn = (e: FocusEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('button, form'))) {
+        setInteractivity(true);
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove, { passive: true });
+    document.addEventListener('mouseleave', handleMouseLeave);
+    document.addEventListener('focusin', handleFocusIn);
+
+    // Initial state: start transparent/click-through
+    setInteractivity(false);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseleave', handleMouseLeave);
+      document.removeEventListener('focusin', handleFocusIn);
+    };
+  }, [settingsOpen]);
 
   // Fullscreen tracking
   useEffect(() => {
@@ -361,8 +456,9 @@ export default function App() {
       {/* Floating Single Draggable HUD Window */}
       {hudVisible && (
         <div
+          data-interactive="true"
+          className="interactive-ui"
           onMouseEnter={() => electronBridge.setInteractive(true)}
-          onMouseLeave={() => electronBridge.setInteractive(false)}
         >
           <FloatingHud
             status={status}
@@ -379,8 +475,9 @@ export default function App() {
 
       {/* Render all active Views (formalized overlay components with pinning) */}
       <div
+        data-interactive="true"
+        className="interactive-ui"
         onMouseEnter={() => electronBridge.setInteractive(true)}
-        onMouseLeave={() => electronBridge.setInteractive(false)}
       >
         {views.map(view => (
           <ViewRenderer
@@ -393,15 +490,15 @@ export default function App() {
         ))}
       </div>
 
-      {/* When HUD is hidden, subtle crossed-eye icon trigger to summon it (NO excess text) */}
+      {/* When HUD is hidden, subtle crossed-eye icon trigger to summon it */}
       {!hudVisible && (
         <div className="fixed inset-0 z-30 flex items-center justify-center pointer-events-none">
           <button
             id="summon-hud-eye-btn"
+            data-interactive="true"
             onMouseEnter={() => electronBridge.setInteractive(true)}
-            onMouseLeave={() => electronBridge.setInteractive(false)}
             onClick={() => setHudVisible(true)}
-            className="pointer-events-auto p-4 rounded-2xl border shadow-xl backdrop-blur-xl transition-all duration-300 hover:scale-105"
+            className="pointer-events-auto interactive-ui p-4 rounded-2xl border shadow-xl backdrop-blur-xl transition-all duration-300 hover:scale-105"
             style={{
               backgroundColor: 'rgba(18, 21, 29, 0.75)',
               borderColor: 'var(--c-border)',
@@ -417,10 +514,10 @@ export default function App() {
       {/* Discrete Corner Control Bar (Minimal Apple-style dock) */}
       <aside
         id="corner-dock-controls"
+        data-interactive="true"
         onClick={e => e.stopPropagation()}
         onMouseEnter={() => electronBridge.setInteractive(true)}
-        onMouseLeave={() => electronBridge.setInteractive(false)}
-        className="fixed top-4 right-4 z-40 flex items-center gap-1.5 p-1.5 rounded-xl border shadow-lg backdrop-blur-xl transition-all"
+        className="interactive-ui fixed top-4 right-4 z-40 flex items-center gap-1.5 p-1.5 rounded-xl border shadow-lg backdrop-blur-xl transition-all"
         style={{
           backgroundColor: 'rgba(18, 21, 29, 0.8)',
           borderColor: 'var(--c-border)'

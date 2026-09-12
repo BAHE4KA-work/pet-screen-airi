@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Monitor, Video, VideoOff, Maximize2, ShieldCheck, Cpu, Activity } from 'lucide-react';
+import { electronBridge } from '../utils/electronBridge';
 
 interface DesktopBackgroundProps {
   opacity: number;
@@ -10,6 +11,7 @@ export const DesktopBackground: React.FC<DesktopBackgroundProps> = ({
   opacity,
   showSimulatedMockup = false
 }) => {
+  const isOverlay = electronBridge.isElectron();
   const [isScreenMirroring, setIsScreenMirroring] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -75,8 +77,8 @@ export const DesktopBackground: React.FC<DesktopBackgroundProps> = ({
         }`}
       />
 
-      {/* 2. Soft Ambient Dimmer (only if not live mirroring and user has opacity > 0) */}
-      {!isScreenMirroring && (
+      {/* 2. Soft Ambient Dimmer (only in browser preview mode when not live mirroring) */}
+      {!isScreenMirroring && !isOverlay && (
         <div
           className="absolute inset-0 transition-opacity duration-300 pointer-events-none"
           style={{

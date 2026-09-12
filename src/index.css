@@ -28,6 +28,13 @@
 }
 
 @layer base {
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+  }
+
   body {
     background-color: var(--c-bg-primary);
     color: var(--c-text);
@@ -35,6 +42,27 @@
     overflow: hidden;
     user-select: none;
   }
+}
+
+/* Transparent overlay rules: When running inside Electron or with overlay mode flag */
+html.is-overlay-mode,
+html.is-overlay-mode body,
+html.is-overlay-mode #root,
+body.is-overlay-transparent,
+#root.is-overlay-transparent {
+  background-color: transparent !important;
+  background: transparent !important;
+}
+
+/* Interactive elements explicitly capture pointer events */
+[data-interactive="true"],
+.interactive-ui,
+.view-window,
+#floating-hud-window,
+#corner-dock-controls,
+#settings-modal-window,
+#summon-hud-eye-btn {
+  pointer-events: auto !important;
 }
 
 /* Custom scrollbars matching theme */

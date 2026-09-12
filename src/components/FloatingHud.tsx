@@ -18,6 +18,7 @@ import {
 import { ModelStatus, ViewSpec } from '../types';
 import { soundEffects } from '../utils/audioEffects';
 import { getSmartQuerySuggestions, SuggestionMatch } from '../utils/fuzzySearch';
+import { electronBridge } from '../utils/electronBridge';
 
 interface FloatingHudProps {
   status: ModelStatus | null;
@@ -339,15 +340,20 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
     <div
       ref={hudRef}
       id="floating-hud-window"
+      data-interactive="true"
       onClick={e => e.stopPropagation()}
-      onMouseDown={e => e.stopPropagation()}
+      onMouseDown={e => {
+        electronBridge.setInteractive(true);
+        e.stopPropagation();
+      }}
+      onMouseEnter={() => electronBridge.setInteractive(true)}
       style={{
         left: `${position.x}px`,
         top: `${position.y}px`,
         maxWidth: '580px',
         width: 'calc(100vw - 32px)'
       }}
-      className="fixed z-50 transition-shadow duration-300"
+      className="fixed z-50 transition-shadow duration-300 interactive-ui"
     >
       <div
         className={`rounded-2xl border shadow-2xl backdrop-blur-2xl overflow-hidden transition-all ${

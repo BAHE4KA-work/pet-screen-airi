@@ -1,6 +1,9 @@
 const { app, BrowserWindow, screen, ipcMain, globalShortcut } = require('electron');
 const path = require('path');
 
+// Ensure transparent visuals are supported across Windows and Linux
+app.commandLine.appendSwitch('enable-transparent-visuals');
+
 let mainWindow = null;
 
 function createWindow() {
@@ -14,6 +17,7 @@ function createWindow() {
     y: 0,
     frame: false,
     transparent: true,
+    backgroundColor: '#00000000',
     alwaysOnTop: true,
     skipTaskbar: false,
     hasShadow: false,
@@ -45,12 +49,16 @@ function createWindow() {
 
   tryLoad();
 
-  // Default: pass mouse clicks through transparent areas
-  mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  // Once page finishes loading, enable click-through with mousemove forwarding
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setIgnoreMouseEvents(true, { forward: true });
+    }
+  });
 
   // Global hotkey Alt+Space to toggle HUD
   globalShortcut.register('Alt+Space', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('toggle-hud');
     }
   });
@@ -64,10 +72,15 @@ function createWindow() {
   });
 }
 
+// Fixed IPC handler: when ignore is false, call setIgnoreMouseEvents(false) cleanly
 ipcMain.on('set-ignore-mouse-events', (event, ignore) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) {
-    win.setIgnoreMouseEvents(ignore, { forward: true });
+    if (ignore) {
+      win.setIgnoreMouseEvents(true, { forward: true });
+    } else {
+      win.setIgnoreMouseEvents(false);
+    }
   }
 });
 
