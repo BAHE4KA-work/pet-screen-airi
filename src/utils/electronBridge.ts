@@ -1,4 +1,6 @@
 // Bridge between web UI and Electron desktop overlay
+export type WindowMode = 'borderless' | 'fullscreen';
+
 export const electronBridge = {
   isElectron: (): boolean => {
     if (typeof window === 'undefined') return false;
@@ -18,6 +20,12 @@ export const electronBridge = {
       } else {
         (window as any).electron.setIgnoreMouseEvents(true, { forward: true });
       }
+    }
+  },
+
+  setWindowMode: (mode: WindowMode) => {
+    if (typeof window !== 'undefined' && (window as any).electron?.setWindowMode) {
+      (window as any).electron.setWindowMode(mode);
     }
   },
 

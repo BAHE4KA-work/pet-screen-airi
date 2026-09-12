@@ -278,3 +278,27 @@ export interface LocalModelsOverview {
   activeSelections: Record<string, string>;
 }
 
+export interface ModelRuntimeState {
+  isLoaded: boolean;
+  loaded: boolean;
+  activeCategory: string;
+  loadedCategory: string;
+  activeFilename: string | null;
+  loadedModel: string | null;
+  activeModelPath: string | null;
+  format: string | null;
+  quantization: string | null;
+  parameters: string | null;
+  architecture: string | null;
+  sizeBytes: number;
+  sizeFormatted: string;
+  ramUsageBytes: number;
+  ramUsageFormatted: string;
+  memoryUsageMb: number;
+  rssMb: number;
+  loadedAt: string | null;
+  lastUsedAt: string | null;
+  statusMessage: string;
+  source: 'RAM_LOCAL_FILE' | 'ENDPOINT' | 'UNLOADED';
+}
+

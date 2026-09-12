@@ -48,8 +48,9 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState('tools');
 
-  // Real Overlay & Fullscreen Preferences
+  // Real Overlay & Window Mode Preferences
   const isOverlayMode = electronBridge.isElectron();
+  const [windowMode, setWindowMode] = useState<'borderless' | 'fullscreen'>('borderless');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [desktopOpacity, setDesktopOpacity] = useState(0.4);
   // In Electron overlay mode, disable fake desktop background so real host screen is seen
@@ -114,13 +115,14 @@ export default function App() {
         target === document.body ||
         target === document.documentElement;
 
-      // Allow bottom edge to pass directly to OS taskbar if not hovering on an active window
-      const isInsideHudOrWindow = Boolean(
+      // Allow bottom edge (taskbar zone) to pass directly to host OS taskbar/dock
+      const isInsideInteractiveWindow = Boolean(
         target.closest('#floating-hud-window') ||
         target.closest('.view-window') ||
-        target.closest('#settings-modal-window')
+        target.closest('#settings-modal-window') ||
+        target.closest('#corner-dock-controls')
       );
-      const isNearTaskbarEdge = clientY >= window.innerHeight - 8 && !isInsideHudOrWindow;
+      const isNearTaskbarEdge = clientY >= window.innerHeight - 24 && !isInsideInteractiveWindow;
 
       const shouldBeInteractive = isInteractiveElement && !isWorkspace && !isNearTaskbarEdge;
       setInteractivity(shouldBeInteractive);
@@ -160,17 +162,29 @@ export default function App() {
   // Fullscreen tracking
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
+      const isFull = Boolean(document.fullscreenElement);
+      setIsFullscreen(isFull);
+      if (!isFull && windowMode === 'fullscreen') {
+        setWindowMode('borderless');
+      }
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
+  }, [windowMode]);
 
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
+  const toggleWindowMode = () => {
+    if (windowMode === 'borderless') {
+      setWindowMode('fullscreen');
+      electronBridge.setWindowMode('fullscreen');
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
     } else {
-      document.exitFullscreen().catch(() => {});
+      setWindowMode('borderless');
+      electronBridge.setWindowMode('borderless');
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
     }
   };
 
@@ -525,14 +539,22 @@ export default function App() {
             borderColor: 'var(--c-border)'
           }}
         >
-          {/* Fullscreen Toggle */}
+          {/* Window Mode Toggle (Borderless Desktop vs Exclusive Fullscreen) */}
           <button
             id="dock-fullscreen-btn"
-            onClick={toggleFullscreen}
-            className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
-            title={isFullscreen ? 'Выйти из полноэкранного режима' : 'Развернуть оверлей на весь экран (F11)'}
+            onClick={toggleWindowMode}
+            className={`p-2 rounded-lg transition-colors ${
+              windowMode === 'fullscreen'
+                ? 'text-[var(--c-peach)] bg-[var(--c-peach-surface)]'
+                : 'text-[var(--c-text-muted)] hover:text-[var(--c-peach)]'
+            }`}
+            title={
+              windowMode === 'fullscreen'
+                ? 'Полноэкранный режим активен. Нажмите для переключения в безрамочный оверлей (сохраняет доступ к панели задач ОС)'
+                : 'Безрамочный оверлей активен (панель задач доступна). Нажмите для полноэкранного режима'
+            }
           >
-            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            {windowMode === 'fullscreen' ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
 
           {/* Quick standard View: Time */}

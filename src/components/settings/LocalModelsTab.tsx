@@ -12,30 +12,23 @@ import {
   Plus,
   Cpu,
   Zap,
-  PowerOff
+  PowerOff,
+  AlertTriangle,
+  HardDrive
 } from 'lucide-react';
-import { LocalModelsOverview, LocalModelCategoryInfo } from '../../types';
+import { LocalModelsOverview, LocalModelCategoryInfo, ModelRuntimeState } from '../../types';
 import { soundEffects } from '../../utils/audioEffects';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
 import { Input } from '../ui/Input';
 
-interface ModelRuntimeState {
-  loaded: boolean;
-  loadedModel: string | null;
-  loadedCategory: string | null;
-  loadedAt: string | null;
-  ramUsageBytes: number;
-  ramUsageFormatted: string;
-  source: 'RAM_LOCAL_FILE' | 'ENDPOINT' | 'UNLOADED';
-}
-
 export const LocalModelsTab: React.FC = () => {
   const [overview, setOverview] = useState<LocalModelsOverview | null>(null);
   const [runtime, setRuntime] = useState<ModelRuntimeState | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingRam, setLoadingRam] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>('basemodel');
   const [showAddModal, setShowAddModal] = useState(false);
   const [newModelName, setNewModelName] = useState('');
@@ -72,6 +65,7 @@ export const LocalModelsTab: React.FC = () => {
 
   const handleRescan = async () => {
     setLoading(true);
+    setRuntimeError(null);
     try {
       const res = await fetch('/api/models/local/scan', { method: 'POST' });
       if (res.ok) {
@@ -92,6 +86,7 @@ export const LocalModelsTab: React.FC = () => {
   };
 
   const handleSelectModel = async (category: string, modelId: string) => {
+    setRuntimeError(null);
     try {
       const res = await fetch('/api/models/local/select', {
         method: 'POST',
@@ -112,9 +107,11 @@ export const LocalModelsTab: React.FC = () => {
 
   const handleLoadToRam = async (category?: string, filename?: string) => {
     setLoadingRam(true);
+    setRuntimeError(null);
     try {
       const cat = category || activeCategory;
       const targetFilename = filename || overview?.categories[cat]?.activeModel;
+      
       const res = await fetch('/api/models/load', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -125,11 +122,13 @@ export const LocalModelsTab: React.FC = () => {
         setRuntime(data.runtime);
         soundEffects.playCompletionPing();
       } else {
-        alert(data.error || 'Ошибка загрузки в ОЗУ');
+        const msg = data.error || 'Ошибка выделения оперативной памяти под модель';
+        setRuntimeError(msg);
         soundEffects.playWarningCue();
       }
-    } catch (e) {
-      console.error('Load to RAM error:', e);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Сетевая ошибка при загрузке в ОЗУ';
+      setRuntimeError(msg);
       soundEffects.playWarningCue();
     } finally {
       setLoadingRam(false);
@@ -138,6 +137,7 @@ export const LocalModelsTab: React.FC = () => {
 
   const handleUnloadFromRam = async () => {
     setLoadingRam(true);
+    setRuntimeError(null);
     try {
       const res = await fetch('/api/models/unload', { method: 'POST' });
       const data = await res.json();
@@ -200,23 +200,25 @@ export const LocalModelsTab: React.FC = () => {
   const currentCategoryInfo: LocalModelCategoryInfo | undefined =
     overview?.categories[activeCategory];
 
+  const isModelLoaded = Boolean(runtime?.isLoaded || runtime?.loaded);
+
   return (
     <div className="space-y-4">
-      {/* RAM Runtime Banner */}
+      {/* RAM Runtime State Banner */}
       <div
-        className="p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+        className="p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all"
         style={{
-          backgroundColor: runtime?.loaded ? 'var(--c-peach-surface)' : 'var(--c-bg-secondary)',
-          borderColor: runtime?.loaded ? 'var(--c-peach-border)' : 'var(--c-border)'
+          backgroundColor: isModelLoaded ? 'var(--c-peach-surface)' : 'var(--c-bg-secondary)',
+          borderColor: isModelLoaded ? 'var(--c-peach-border)' : 'var(--c-border)'
         }}
       >
         <div className="flex items-center gap-3">
           <div
-            className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border"
+            className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border transition-all"
             style={{
-              backgroundColor: runtime?.loaded ? 'var(--c-bg-primary)' : 'var(--c-bg-tertiary)',
-              borderColor: runtime?.loaded ? 'var(--c-peach-border)' : 'var(--c-border)',
-              color: runtime?.loaded ? 'var(--c-peach-light)' : 'var(--c-text-muted)'
+              backgroundColor: isModelLoaded ? 'var(--c-bg-primary)' : 'var(--c-bg-tertiary)',
+              borderColor: isModelLoaded ? 'var(--c-peach-border)' : 'var(--c-border)',
+              color: isModelLoaded ? 'var(--c-peach-light)' : 'var(--c-text-muted)'
             }}
           >
             <Cpu className="w-5 h-5" />
@@ -225,22 +227,22 @@ export const LocalModelsTab: React.FC = () => {
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold" style={{ color: 'var(--c-text)' }}>
-                {runtime?.loaded ? 'Модель загружена в ОЗУ' : 'Модель не загружена в ОЗУ'}
+                {isModelLoaded ? 'Модель загружена в ОЗУ' : 'Модель не загружена в ОЗУ'}
               </span>
-              <Badge variant={runtime?.loaded ? 'peach' : 'neutral'} size="sm">
-                {runtime?.loaded ? runtime.ramUsageFormatted : '0 MB'}
+              <Badge variant={isModelLoaded ? 'peach' : 'neutral'} size="sm">
+                {isModelLoaded ? `${runtime?.ramUsageFormatted || runtime?.sizeFormatted} (RSS: ${runtime?.rssMb || 0} MB)` : '0 MB'}
               </Badge>
             </div>
             <div className="text-[11px] font-mono text-[var(--c-text-muted)]">
-              {runtime?.loaded
-                ? `${runtime.loadedModel} (${runtime.loadedCategory})`
-                : 'Загружается автоматически при запросе или вручную по кнопке'}
+              {isModelLoaded
+                ? `${runtime?.loadedModel || runtime?.activeFilename} (${runtime?.loadedCategory || runtime?.activeCategory})`
+                : 'Загружается в память автоматически при первом запросе или вручную'}
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          {runtime?.loaded ? (
+          {isModelLoaded ? (
             <Button
               size="sm"
               variant="outline"
@@ -258,11 +260,24 @@ export const LocalModelsTab: React.FC = () => {
               disabled={loadingRam || !overview?.categories[activeCategory]?.activeModel}
               icon={<Zap className={`w-3.5 h-3.5 ${loadingRam ? 'animate-spin' : ''}`} />}
             >
-              {loadingRam ? 'Загрузка...' : 'Загрузить в ОЗУ'}
+              {loadingRam ? 'Загрузка весов в ОЗУ...' : 'Загрузить в ОЗУ'}
             </Button>
           )}
         </div>
       </div>
+
+      {/* Runtime Error Notification */}
+      {runtimeError && (
+        <Card className="p-3 border-amber-500/30 bg-amber-500/10 space-y-1">
+          <div className="flex items-center gap-2 text-xs font-medium text-amber-300">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{runtimeError}</span>
+          </div>
+          <p className="text-[11px] text-amber-200/70 pl-6">
+            Для использования локальной модели скопируйте GGUF/бин файл весов в каталог <code>models/{activeCategory}/</code> на хосте или в Docker volume.
+          </p>
+        </Card>
+      )}
 
       {/* Action Header */}
       <div className="flex items-center justify-between pb-2 border-b border-[var(--c-border)]">
@@ -305,7 +320,10 @@ export const LocalModelsTab: React.FC = () => {
           return (
             <button
               key={key}
-              onClick={() => setActiveCategory(key)}
+              onClick={() => {
+                setActiveCategory(key);
+                setRuntimeError(null);
+              }}
               className="p-2.5 rounded-xl border text-left transition-all flex items-center justify-between"
               style={{
                 backgroundColor: isSelected ? 'var(--c-peach-surface)' : 'var(--c-bg-secondary)',
@@ -329,13 +347,19 @@ export const LocalModelsTab: React.FC = () => {
       {currentCategoryInfo && (
         <div className="space-y-2">
           {currentCategoryInfo.files.length === 0 ? (
-            <div className="p-8 text-center rounded-xl border border-dashed border-[var(--c-border)] text-xs text-[var(--c-text-muted)]">
-              Файлы моделей в <code>models/{currentCategoryInfo.key}/</code> не найдены.
+            <div className="p-8 text-center rounded-xl border border-dashed border-[var(--c-border)] text-xs text-[var(--c-text-muted)] space-y-2">
+              <HardDrive className="w-8 h-8 mx-auto text-[var(--c-text-dim)] opacity-50" />
+              <div>
+                Файлы моделей в каталоге <code>models/{currentCategoryInfo.key}/</code> не найдены.
+              </div>
+              <div className="text-[11px] text-[var(--c-text-dim)]">
+                Поместите файлы моделей (например <code>functiongemma-7b.gguf</code>) в каталог <code>models/{currentCategoryInfo.key}/</code> и нажмите «Пересканировать».
+              </div>
             </div>
           ) : (
             currentCategoryInfo.files.map(file => {
               const isActive = file.isActive;
-              const isLoadedInRam = runtime?.loaded && runtime.loadedModel === file.filename;
+              const isLoadedInRam = isModelLoaded && (runtime?.loadedModel === file.filename || runtime?.activeFilename === file.filename);
 
               return (
                 <div
@@ -454,9 +478,9 @@ export const LocalModelsTab: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-[11px] block mb-1 text-[var(--c-text-muted)]">Название</label>
+                <label className="text-[11px] block mb-1 text-[var(--c-text-muted)]">Отображаемое название</label>
                 <Input
-                  placeholder="FunctionGemma-7B"
+                  placeholder="FunctionGemma 7B FineTuned"
                   value={newModelName}
                   onChange={e => setNewModelName(e.target.value)}
                 />
@@ -466,6 +490,7 @@ export const LocalModelsTab: React.FC = () => {
                 <div>
                   <label className="text-[11px] block mb-1 text-[var(--c-text-muted)]">Квантование</label>
                   <Input
+                    placeholder="Q4_K_M"
                     value={newModelQuant}
                     onChange={e => setNewModelQuant(e.target.value)}
                   />
@@ -473,13 +498,14 @@ export const LocalModelsTab: React.FC = () => {
                 <div>
                   <label className="text-[11px] block mb-1 text-[var(--c-text-muted)]">Параметры</label>
                   <Input
+                    placeholder="7B"
                     value={newModelParams}
                     onChange={e => setNewModelParams(e.target.value)}
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/5">
                 <Button size="sm" variant="ghost" onClick={() => setShowAddModal(false)}>
                   Отмена
                 </Button>
