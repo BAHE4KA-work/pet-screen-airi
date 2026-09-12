@@ -1,0 +1,19 @@
+{
+  "name": "calc",
+  "title": "Инженерный калькулятор",
+  "description": "Безопасное вычисление математических выражений и конвертация единиц",
+  "version": "1.0.0",
+  "creds": {
+    "author": "Airi Core Team",
+    "email": "dev@airi.assistant",
+    "license": "MIT"
+  },
+  "icon": "Calculator",
+  "tools": [
+    {
+      "name": "evaluate_math",
+      "file": "calc_tool.js",
+      "description": "Вычислить математическое выражение и отобразить карточку результата"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "system",
+  "title": "Системный монитор и процессы",
+  "description": "Мониторинг ресурсов (CPU, RAM, Uptime) и инспекция запущенных процессов хоста с Views-графикой",
+  "version": "1.2.0",
+  "creds": {
+    "author": "Airi Core Team",
+    "email": "dev@airi.assistant",
+    "license": "MIT",
+    "homepage": "https://github.com/airi-assistant/module-system"
+  },
+  "icon": "Cpu",
+  "tools": [
+    {
+      "name": "get_metrics",
+      "file": "system_metrics.js",
+      "description": "Получить текущие метрики системы (CPU, RAM, нагрузка) и вывести графический View"
+    },
+    {
+      "name": "manage_processes",
+      "file": "manage_processes.js",
+      "description": "Получить список активных процессов и вывести в интерактивный ListView"
+    }
+  ]
+}

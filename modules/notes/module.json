@@ -1,0 +1,19 @@
+{
+  "name": "notes",
+  "title": "Хранилище быстрых заметок",
+  "description": "Создание, просмотр и поиск быстрых текстовых заметок с отображением во Views",
+  "version": "1.0.0",
+  "creds": {
+    "author": "Airi Core Team",
+    "email": "dev@airi.assistant",
+    "license": "MIT"
+  },
+  "icon": "FileText",
+  "tools": [
+    {
+      "name": "quick_notes",
+      "file": "notes_tool.js",
+      "description": "Создать новую заметку, найти или отобразить существующие"
+    }
+  ]
+}

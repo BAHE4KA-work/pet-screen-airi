@@ -1,0 +1,86 @@
+services:
+  # 1. Main FunctionGemma Overlay Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: functiongemma-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - STORAGE_PATH=/app/storage
+      - LOCAL_LLM_ENDPOINT=http://functiongemma-llm:11434
+      - LOCAL_STT_ENDPOINT=http://stt-whisper:8000/v1/audio/transcriptions
+      - HTTP_PROXY=http://network-proxy:8080
+      - HTTPS_PROXY=http://network-proxy:8080
+      - ALL_PROXY=socks5://network-proxy:1080
+    volumes:
+      - app-storage:/app/storage
+    depends_on:
+      - functiongemma-llm
+      - stt-whisper
+      - network-proxy
+    networks:
+      - functiongemma-net
+
+  # 2. Local Function Calling LLM Service (Ollama / vLLM)
+  functiongemma-llm:
+    image: ollama/ollama:latest
+    container_name: functiongemma-llm
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_NUM_PARALLEL=4
+    networks:
+      - functiongemma-net
+
+  # 3. Local Speech-to-Text Service (Faster-Whisper OpenAI API)
+  stt-whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    container_name: functiongemma-stt
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - WHISPER_MODEL=base
+      - WHISPER_LANGUAGE=ru
+      - WHISPER_DEVICE=cpu
+    volumes:
+      - whisper-models:/root/.cache/huggingface
+    networks:
+      - functiongemma-net
+
+  # 4. Optional Internal Multi-Protocol Network Proxy (SOCKS5, HTTP, HTTPS, Shadowsocks)
+  network-proxy:
+    image: ginuerzh/gost:latest
+    container_name: functiongemma-proxy
+    restart: unless-stopped
+    command: >
+      -L=http://:8080
+      -L=socks5://:1080
+      -L=ss://AEAD_CHACHA20_POLY1305:proxy_secret_key@:8388
+    ports:
+      - "8080:8080" # HTTP/HTTPS Proxy
+      - "1080:1080" # SOCKS5 Proxy
+      - "8388:8388" # Shadowsocks Proxy
+    networks:
+      - functiongemma-net
+
+networks:
+  functiongemma-net:
+    driver: bridge
+
+volumes:
+  app-storage:
+    driver: local
+  ollama-models:
+    driver: local
+  whisper-models:
+    driver: local

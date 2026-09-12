@@ -1,0 +1,26 @@
+{
+  "routes": [
+    {
+      "name": "http-proxy",
+      "addr": ":8080",
+      "proto": "http",
+      "trans": "tcp"
+    },
+    {
+      "name": "socks5-proxy",
+      "addr": ":1080",
+      "proto": "socks5",
+      "trans": "tcp"
+    },
+    {
+      "name": "shadowsocks-proxy",
+      "addr": ":8388",
+      "proto": "ss",
+      "trans": "tcp",
+      "auth": {
+        "method": "AEAD_CHACHA20_POLY1305",
+        "password": "proxy_secret_key"
+      }
+    }
+  ]
+}

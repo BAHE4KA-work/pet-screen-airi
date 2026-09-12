@@ -1,0 +1,20 @@
+{
+  "name": "time",
+  "title": "Системное время и дата",
+  "description": "Отображение точного системного времени, даты, дня недели и часового пояса через стандартный View-компонент",
+  "version": "1.0.0",
+  "creds": {
+    "author": "Airi Core Team",
+    "email": "dev@airi.assistant",
+    "license": "MIT",
+    "homepage": "https://github.com/airi-assistant/module-time"
+  },
+  "icon": "Clock",
+  "tools": [
+    {
+      "name": "get_current_time",
+      "file": "time_tool.js",
+      "description": "Получить текущее системное время, дату и часовой пояс в интерактивном окне Views"
+    }
+  ]
+}

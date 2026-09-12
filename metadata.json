@@ -1,0 +1,6 @@
+{
+  "name": "Airi - personal screen assistant",
+  "description": "Airi: персональный экранный ассистент с полупрозрачным HUD-оверлеем, формализованной системой окон Views, проектной структурой модулей и локальным инференсом.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

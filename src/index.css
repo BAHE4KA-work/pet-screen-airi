@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+:root {
+  /* Information / Neutral text colors */
+  --c-text: #f1f5f9;
+  --c-text-muted: #94a3b8;
+  --c-text-dim: #64748b;
+
+  /* Primary Context Color (Peach / Персиковый) - for Positive & Neutral information, active states */
+  --c-peach: #fb923c;
+  --c-peach-light: #fdba74;
+  --c-peach-dark: #ea580c;
+  --c-peach-surface: rgba(251, 146, 60, 0.12);
+  --c-peach-border: rgba(251, 146, 60, 0.28);
+
+  /* Secondary Context Color (Mint / Мятный) - for Negative information, warnings, conflicts, errors */
+  --c-mint: #14b8a6;
+  --c-mint-light: #5eead4;
+  --c-mint-dark: #0f766e;
+  --c-mint-surface: rgba(20, 184, 166, 0.12);
+  --c-mint-border: rgba(20, 184, 166, 0.28);
+
+  /* Background Colors */
+  --c-bg-primary: #0a0c10;
+  --c-bg-secondary: #12151d;
+  --c-bg-tertiary: #1a1e28;
+  --c-border: rgba(255, 255, 255, 0.08);
+}
+
+@layer base {
+  body {
+    background-color: var(--c-bg-primary);
+    color: var(--c-text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', system-ui, sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+}
+
+/* Custom scrollbars matching theme */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--c-peach);
+}
+
+/* Code block highlight */
+pre, code {
+  font-family: -apple-system-ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+

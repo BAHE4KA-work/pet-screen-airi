@@ -1,0 +1,19 @@
+{
+  "name": "browser",
+  "title": "Управление веб-навигацией",
+  "description": "Поиск в вебе и открытие ссылок в браузере пользователя",
+  "version": "1.0.0",
+  "creds": {
+    "author": "Airi Core Team",
+    "email": "dev@airi.assistant",
+    "license": "MIT"
+  },
+  "icon": "Compass",
+  "tools": [
+    {
+      "name": "open_url",
+      "file": "browser_tool.js",
+      "description": "Сформировать безопасную ссылку для перехода или поиска в браузере"
+    }
+  ]
+}
