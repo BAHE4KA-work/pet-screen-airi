@@ -1,22 +1,35 @@
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS builder
+FROM node:22-slim AS builder
 
 WORKDIR /app
 
-# 1. Установка с кэшированием Docker BuildKit
-COPY package*.json tsconfig.json vite.config.ts ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm install
+# Оптимизация сетевых запросов npm и отключение лишней телеметрии/аудита
+ENV NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_PROGRESS=false
 
-# 2. Сборка приложения
+# 1. Копируем манифесты зависимостей и конфиги
+COPY package*.json tsconfig.json vite.config.ts ./
+
+# 2. Быстрая детерминированная установка через npm ci (без зависаний кэша BuildKit)
+RUN if [ -f package-lock.json ]; then \
+        npm ci --no-audit --no-fund; \
+    else \
+        npm install --no-audit --no-fund; \
+    fi
+
+# 3. Сборка приложения
 COPY . .
 RUN npm run build
 
-# 3. Очистка dev-зависимостей
+# 4. Очистка dev-зависимостей перед копированием в рантайм
 RUN npm prune --omit=dev
 
 # Финальный легковесный образ
-FROM node:22-alpine AS runner
+FROM node:22-slim AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production
