@@ -78,6 +78,8 @@ interface SettingsModalProps {
   setDesktopOpacity: (val: number) => void;
   showDesktop: boolean;
   setShowDesktop: (val: boolean) => void;
+  isTaskbarVisible?: boolean;
+  setIsTaskbarVisible?: (val: boolean) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -103,7 +105,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   desktopOpacity,
   setDesktopOpacity,
   showDesktop,
-  setShowDesktop
+  setShowDesktop,
+  isTaskbarVisible = true,
+  setIsTaskbarVisible
 }) => {
   const [activeTab, setActiveTab] = useState<string>(initialTab);
 
@@ -865,6 +869,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </Button>
                     <Button size="sm" variant="secondary" onClick={() => soundEffects.playToolCallCue()}>
                       Тест: Вызов
+                    </Button>
+                  </div>
+                </Card>
+
+                {/* Bottom Taskbar visibility toggle */}
+                <Card className="space-y-2 p-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-[var(--c-peach)]" />
+                      <div className="flex flex-col">
+                        <span className="font-medium" style={{ color: 'var(--c-text)' }}>
+                          Нижняя панель задач (Taskbar)
+                        </span>
+                        <span className="text-[10px] text-[var(--c-text-muted)]">
+                          Панель быстрого доступа внизу экрана. При скрытии доступна плашка возврата.
+                        </span>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant={isTaskbarVisible ? 'primary' : 'outline'}
+                      onClick={() => {
+                        const next = !isTaskbarVisible;
+                        if (setIsTaskbarVisible) setIsTaskbarVisible(next);
+                        localStorage.setItem('overlay_taskbar_visible', String(next));
+                      }}
+                    >
+                      {isTaskbarVisible ? 'Показана' : 'Скрыта'}
                     </Button>
                   </div>
                 </Card>

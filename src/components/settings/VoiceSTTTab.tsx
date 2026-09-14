@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, Check, RotateCw, AlertCircle, Square, MicOff, Volume2 } from 'lucide-react';
+import { Mic, Check, RotateCw, AlertCircle, Square, MicOff, Volume2, Radio, Activity } from 'lucide-react';
 import { STTConfig, LocalModelsOverview } from '../../types';
 import { soundEffects } from '../../utils/audioEffects';
 import { audioDevicesManager, AudioDeviceOption } from '../../utils/audioDevices';
+import { actionLogger } from '../../utils/actionLogger';
 import { AudioVolumeVisualizer } from '../ui/AudioVolumeVisualizer';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -26,9 +27,13 @@ export const VoiceSTTTab: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [testTranscript, setTestTranscript] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [streamChunksSent, setStreamChunksSent] = useState<number>(0);
+  const [streamStatusText, setStreamStatusText] = useState<string>('');
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const streamIdRef = useRef<string>('');
+  const chunkIndexRef = useRef<number>(0);
 
   const loadAudioDevices = async () => {
     const devices = await audioDevicesManager.getAudioInputDevices();
@@ -114,11 +119,65 @@ export const VoiceSTTTab: React.FC = () => {
       const stream = await audioDevicesManager.getUserMediaWithDevice(selectedDeviceId);
       setActiveStream(stream);
 
+      const streamId = `test_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      streamIdRef.current = streamId;
+      chunkIndexRef.current = 0;
+      setStreamChunksSent(0);
+      setStreamStatusText('Инициализация аудиопотока...');
+
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
-      mediaRecorder.ondataavailable = e => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      actionLogger.info('voice', 'Старт проверки микрофона в настройках (режим стриминга)', {
+        streamId,
+        deviceId: selectedDeviceId || 'default'
+      });
+
+      mediaRecorder.ondataavailable = event => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+          const currentChunkIdx = chunkIndexRef.current++;
+          setStreamChunksSent(currentChunkIdx + 1);
+
+          // Progressive slice with valid container headers
+          const cumulativeBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const reader = new FileReader();
+          reader.readAsDataURL(cumulativeBlob);
+          reader.onloadend = async () => {
+            const base64 = (reader.result as string).split(',')[1] || '';
+            if (!base64) return;
+
+            actionLogger.info('voice', `Тест микрофона: отправка чанка #${currentChunkIdx} в whisper.cpp...`, {
+              streamId,
+              chunkIndex: currentChunkIdx,
+              sizeBytes: cumulativeBlob.size
+            });
+
+            setStreamStatusText(`Стрим активен: отправлен чанк #${currentChunkIdx + 1}`);
+
+            try {
+              const res = await fetch('/api/stt/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  streamId,
+                  chunkIndex: currentChunkIdx,
+                  base64Audio: base64,
+                  isFinal: false,
+                  language: config.language || 'ru',
+                  modelFile: config.modelFile
+                })
+              });
+              const data = await res.json();
+              if (data.text) {
+                setTestTranscript(data.text);
+                actionLogger.info('voice', `Тест микрофона: промежуточный текст [чанк #${currentChunkIdx}]: "${data.text}"`);
+              }
+            } catch (err: any) {
+              console.warn('[VoiceSTTTab] Chunk error:', err);
+            }
+          };
+        }
       };
 
       mediaRecorder.onstop = async () => {
@@ -126,6 +185,10 @@ export const VoiceSTTTab: React.FC = () => {
         setActiveStream(null);
         setIsRecording(false);
         setIsTranscribing(true);
+        setStreamStatusText('Обработка финального аудиосегмента в whisper.cpp...');
+        actionLogger.info('voice', 'Тест микрофона: запись завершена, отправка финального стрим-запроса...', {
+          streamId: streamIdRef.current
+        });
 
         try {
           const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
@@ -133,39 +196,53 @@ export const VoiceSTTTab: React.FC = () => {
           reader.readAsDataURL(blob);
           reader.onloadend = async () => {
             const base64 = (reader.result as string).split(',')[1] || '';
-            const res = await fetch('/api/stt/transcribe', {
+            const res = await fetch('/api/stt/stream', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
+                streamId: streamIdRef.current,
+                chunkIndex: chunkIndexRef.current++,
                 base64Audio: base64,
-                filename: 'test_voice.webm',
+                isFinal: true,
+                language: config.language || 'ru',
                 modelFile: config.modelFile
               })
             });
             const data = await res.json();
             setIsTranscribing(false);
+            setStreamStatusText('');
             if (data.text) {
               setTestTranscript(data.text);
+              actionLogger.success('voice', `Тест микрофона: whisper.cpp успешно распознал речь: "${data.text}"`, {
+                duration_sec: data.duration_sec,
+                confidence: data.confidence,
+                source: data.source
+              });
               soundEffects.playCompletionPing();
             } else {
               setTestTranscript('(Речь не распознана. Проверьте правильность выбранного микрофона и громкость)');
+              actionLogger.warn('voice', 'Тест микрофона: речь не распознана или была слишком тихой');
             }
           };
-        } catch {
+        } catch (err: any) {
           setIsTranscribing(false);
+          setStreamStatusText('');
           setTestTranscript('(Ошибка распознавания аудио)');
+          actionLogger.error('voice', `Тест микрофона: ошибка ответа бэкенда: ${err.message || err}`);
         }
       };
 
-      mediaRecorder.start();
+      // Start recording with 1000ms chunk intervals
+      mediaRecorder.start(1000);
       setIsRecording(true);
       setTestTranscript(null);
       soundEffects.playToolCallCue();
-    } catch (err) {
+    } catch (err: any) {
       setIsRecording(false);
       setActiveStream(null);
       soundEffects.playWarningCue();
       setTestTranscript('(Доступ к выбранному микрофону заблокирован или устройство недоступно)');
+      actionLogger.error('voice', `Тест микрофона: ошибка доступа к устройству: ${err.message || err}`);
     }
   };
 
@@ -332,28 +409,41 @@ export const VoiceSTTTab: React.FC = () => {
         )}
 
         {/* Status or Transcript Text Under the Button */}
-        <div className="min-h-[24px] max-w-md">
+        <div className="min-h-[24px] max-w-md space-y-2">
           {isRecording && (
-            <span className="text-xs font-mono text-[var(--c-mint-light)] animate-pulse">
-              Идет запись голоса... Нажмите кнопку для остановки
-            </span>
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--c-mint)]/20 border border-[var(--c-mint)]/40 text-[11px] font-mono text-[var(--c-mint-light)]">
+                <Radio className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
+                <span>Стрим в whisper.cpp: чанков отправлено {streamChunksSent}</span>
+              </div>
+              {streamStatusText && (
+                <span className="text-[10px] font-mono text-[var(--c-text-muted)]">
+                  {streamStatusText}
+                </span>
+              )}
+            </div>
           )}
 
           {isTranscribing && (
-            <span className="text-xs font-mono text-[var(--c-peach-light)]">
-              Распознавание аудио...
-            </span>
+            <div className="flex items-center justify-center gap-1.5 text-xs font-mono text-[var(--c-peach-light)]">
+              <Activity className="w-3.5 h-3.5 animate-spin" />
+              <span>{streamStatusText || 'Финальное распознавание аудио в whisper.cpp...'}</span>
+            </div>
           )}
 
-          {!isRecording && !isTranscribing && testTranscript && (
-            <div className="p-2.5 rounded-lg border text-xs font-mono" style={{ backgroundColor: 'var(--c-bg-tertiary)', borderColor: 'var(--c-border)', color: 'var(--c-text)' }}>
-              {testTranscript}
+          {testTranscript && (
+            <div className="p-2.5 rounded-lg border text-xs font-mono text-left animate-fadeIn" style={{ backgroundColor: 'var(--c-bg-tertiary)', borderColor: 'var(--c-border)', color: 'var(--c-text)' }}>
+              <div className="flex items-center justify-between text-[10px] text-[var(--c-text-dim)] mb-1 pb-1 border-b border-[var(--c-border)]">
+                <span>Результат STT:</span>
+                <span className="text-emerald-400">whisper.cpp</span>
+              </div>
+              <p className="whitespace-pre-wrap">{testTranscript}</p>
             </div>
           )}
 
           {!isRecording && !isTranscribing && !testTranscript && (
             <span className="text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
-              Нажмите кнопку микрофона для тестовой записи
+              Нажмите кнопку микрофона для тестовой стрим-записи в whisper.cpp
             </span>
           )}
         </div>

@@ -60,6 +60,10 @@ export default function App() {
   // In Electron overlay mode, disable fake desktop background so real host screen is seen
   const [showDesktop, setShowDesktop] = useState(!isOverlayMode);
   const [showSimulatedMockup, setShowSimulatedMockup] = useState(false);
+  const [isTaskbarVisible, setIsTaskbarVisible] = useState<boolean>(() => {
+    const saved = localStorage.getItem('overlay_taskbar_visible');
+    return saved !== null ? saved === 'true' : true;
+  });
 
   // Set transparency class on document for overlay mode
   useEffect(() => {
@@ -648,10 +652,14 @@ export default function App() {
         setDesktopOpacity={setDesktopOpacity}
         showDesktop={showDesktop}
         setShowDesktop={setShowDesktop}
+        isTaskbarVisible={isTaskbarVisible}
+        setIsTaskbarVisible={setIsTaskbarVisible}
       />
 
       {/* Persistent Bottom Taskbar (Панель задач) */}
       <Taskbar
+        isVisible={isTaskbarVisible}
+        onToggleVisible={setIsTaskbarVisible}
         hudVisible={hudVisible}
         onToggleHud={() => {
           const next = !hudVisible;

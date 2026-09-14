@@ -38,6 +38,8 @@ interface TaskbarProps {
   onToggleWindowMode: () => void;
   showDesktop: boolean;
   onToggleDesktop: () => void;
+  isVisible?: boolean;
+  onToggleVisible?: (visible: boolean) => void;
 }
 
 export const Taskbar: React.FC<TaskbarProps> = ({
@@ -52,8 +54,22 @@ export const Taskbar: React.FC<TaskbarProps> = ({
   windowMode,
   onToggleWindowMode,
   showDesktop,
-  onToggleDesktop
+  onToggleDesktop,
+  isVisible,
+  onToggleVisible
 }) => {
+  const [internalVisible, setInternalVisible] = useState<boolean>(() => {
+    const saved = localStorage.getItem('overlay_taskbar_visible');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  const visible = isVisible !== undefined ? isVisible : internalVisible;
+  const setVisible = (next: boolean) => {
+    setInternalVisible(next);
+    localStorage.setItem('overlay_taskbar_visible', String(next));
+    if (onToggleVisible) onToggleVisible(next);
+  };
+
   const [timeStr, setTimeStr] = useState('');
   const [dateStr, setDateStr] = useState('');
   const [latestLog, setLatestLog] = useState<ActionLogItem | null>(null);
@@ -114,6 +130,26 @@ export const Taskbar: React.FC<TaskbarProps> = ({
 
   const selectedDeviceName =
     audioDevices.find(d => d.deviceId === selectedDeviceId)?.label || 'Микрофон по умолчанию';
+
+  if (!visible) {
+    return (
+      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 z-40 mb-1 flex items-center select-none pointer-events-auto">
+        <button
+          id="taskbar-collapsed-restore-btn"
+          onClick={() => {
+            setVisible(true);
+            soundEffects.playToolCallCue();
+            actionLogger.info('ui', 'Панель задач развернута');
+          }}
+          className="group flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--c-bg-surface)]/90 hover:bg-[var(--c-bg-surface)] border border-[var(--c-border)] shadow-lg backdrop-blur-md text-[var(--c-text-muted)] hover:text-[var(--c-peach)] text-xs font-mono transition-all hover:scale-105 active:scale-95"
+          title="Показать панель задач"
+        >
+          <ChevronUp className="w-3.5 h-3.5 group-hover:-translate-y-0.5 transition-transform text-[var(--c-peach)]" />
+          <span>Панель задач</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <footer
@@ -228,6 +264,19 @@ export const Taskbar: React.FC<TaskbarProps> = ({
               >
                 <Settings className="w-3.5 h-3.5 text-[var(--c-text-muted)]" />
                 <span>Все настройки</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setVisible(false);
+                  setShowStartMenu(false);
+                  soundEffects.playToolCallCue();
+                  actionLogger.info('ui', 'Панель задач скрыта из главного меню');
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-white/5 text-[var(--c-peach-light)] transition-colors text-left"
+              >
+                <ChevronDown className="w-3.5 h-3.5" />
+                <span>Скрыть панель задач</span>
               </button>
             </div>
           )}
@@ -414,6 +463,20 @@ export const Taskbar: React.FC<TaskbarProps> = ({
           title="Открыть настройки"
         >
           <Settings className="w-4 h-4" />
+        </button>
+
+        {/* Hide / Collapse Taskbar Button */}
+        <button
+          id="taskbar-collapse-btn"
+          onClick={() => {
+            setVisible(false);
+            soundEffects.playToolCallCue();
+            actionLogger.info('ui', 'Панель задач скрыта (нажмите на нижнюю плашку для возврата)');
+          }}
+          className="p-1.5 rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-secondary)] hover:bg-[var(--c-bg-tertiary)] text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
+          title="Скрыть панель задач"
+        >
+          <ChevronDown className="w-4 h-4" />
         </button>
 
         {/* System Clock & Date */}

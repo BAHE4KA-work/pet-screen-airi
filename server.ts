@@ -16,7 +16,8 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // API: Get Model and Checksum Status
 app.get('/api/status', (req, res) => {
@@ -471,6 +472,45 @@ app.post('/api/stt/transcribe', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// API: Real-time Audio Stream Chunk for Whisper STT
+app.post('/api/stt/stream', async (req, res) => {
+  try {
+    const { streamId, chunkIndex, base64Audio, isFinal, language, modelFile } = req.body;
+    if (!base64Audio) {
+      res.status(400).json({ success: false, error: 'Параметр base64Audio отсутствует.' });
+      return;
+    }
+
+    const buffer = Buffer.from(base64Audio, 'base64');
+    console.log(`[STT Stream] Processing stream ${streamId || 'default'} chunk #${chunkIndex ?? 0} (${buffer.length} bytes, final: ${Boolean(isFinal)})`);
+
+    const result = await sttService.transcribeAudio(buffer, 'stream.webm');
+
+    broadcastServerEvent('stt_stream_chunk', {
+      streamId: streamId || 'default',
+      chunkIndex: chunkIndex ?? 0,
+      isFinal: Boolean(isFinal),
+      text: result.text || '',
+      source: result.source
+    });
+
+    res.json({
+      success: true,
+      streamId: streamId || 'default',
+      chunkIndex: chunkIndex ?? 0,
+      isFinal: Boolean(isFinal),
+      text: result.text || '',
+      duration_sec: result.duration_sec,
+      confidence: result.confidence,
+      source: result.source
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[STT Stream] Error processing audio chunk:', msg);
     res.status(500).json({ success: false, error: msg });
   }
 });

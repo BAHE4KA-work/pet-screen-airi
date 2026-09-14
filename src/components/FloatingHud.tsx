@@ -73,6 +73,8 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const speechRecognitionRef = useRef<any>(null);
+  const streamIdRef = useRef<string>('');
+  const chunkIndexRef = useRef<number>(0);
 
   // Draggable positioning state
   const [position, setPosition] = useState<{ x: number; y: number }>(() => {
@@ -350,14 +352,54 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         }
       }
 
-      // 2. Setup MediaRecorder for backend Whisper STT
+      // 2. Setup MediaRecorder for backend Whisper STT streaming
+      const streamId = `hud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      streamIdRef.current = streamId;
+      chunkIndexRef.current = 0;
+
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = event => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
           audioChunksRef.current.push(event.data);
+          const currentChunkIdx = chunkIndexRef.current++;
+
+          // Progressive audio slice with WebM container header intact
+          const cumulativeBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const reader = new FileReader();
+          reader.readAsDataURL(cumulativeBlob);
+          reader.onloadend = async () => {
+            const base64 = (reader.result as string)?.split(',')[1] || '';
+            if (!base64) return;
+
+            actionLogger.info('voice', `Отправка стрим-чанка #${currentChunkIdx} на сервер (${cumulativeBlob.size} B)...`, {
+              streamId,
+              chunkIndex: currentChunkIdx
+            });
+
+            try {
+              const res = await fetch('/api/stt/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  streamId,
+                  chunkIndex: currentChunkIdx,
+                  base64Audio: base64,
+                  isFinal: false,
+                  language: 'ru'
+                })
+              });
+              const data = await res.json();
+              if (data.text) {
+                setPrompt(data.text);
+                actionLogger.info('voice', `Промежуточный результат whisper.cpp [чанк #${currentChunkIdx}]: "${data.text}"`);
+              }
+            } catch (err: any) {
+              console.warn('[STT Stream] Chunk transmission error:', err);
+            }
+          };
         }
       };
 
@@ -366,7 +408,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         setActiveAudioStream(null);
         setIsRecording(false);
         setIsSpeaking(false);
-        actionLogger.info('voice', 'Запись микрофона завершена, отправка в whisper.cpp...');
+        actionLogger.info('voice', 'Запись микрофона завершена, отправка финального фрагмента в whisper.cpp...');
 
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         if (audioBlob.size < 100) return;
@@ -376,17 +418,24 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         reader.onloadend = async () => {
           const base64 = (reader.result as string)?.split(',')[1] || '';
           try {
-            const res = await fetch('/api/stt/transcribe', {
+            const res = await fetch('/api/stt/stream', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ base64Audio: base64, filename: 'voice.webm' })
+              body: JSON.stringify({
+                streamId: streamIdRef.current,
+                chunkIndex: chunkIndexRef.current++,
+                base64Audio: base64,
+                isFinal: true,
+                language: 'ru'
+              })
             });
             const data = await res.json();
             if (data.text) {
               setPrompt(data.text);
-              actionLogger.success('voice', `whisper.cpp распознал: "${data.text}"`, {
+              actionLogger.success('voice', `whisper.cpp распознал (финал): "${data.text}"`, {
                 duration_sec: data.duration_sec,
-                confidence: data.confidence
+                confidence: data.confidence,
+                source: data.source
               });
               soundEffects.playCompletionPing();
               inputRef.current?.focus();
@@ -401,10 +450,12 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         };
       };
 
-      mediaRecorder.start();
+      // Emit audio chunks every 1000ms for streaming
+      mediaRecorder.start(1000);
       setIsRecording(true);
-      actionLogger.info('voice', 'Начата запись с микрофона', {
-        deviceId: selectedDeviceId || 'default'
+      actionLogger.info('voice', 'Начата трансляция звука с микрофона в whisper.cpp', {
+        deviceId: selectedDeviceId || 'default',
+        streamId
       });
       soundEffects.playToolCallCue();
     } catch (err: any) {
