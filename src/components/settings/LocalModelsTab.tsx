@@ -247,7 +247,7 @@ export const LocalModelsTab: React.FC = () => {
             <div className="text-[10px] text-[var(--c-text-dim)] uppercase tracking-wider font-semibold">LLM Worker</div>
             <div className="flex items-center gap-1.5 font-medium text-[11px] text-[var(--c-peach-light)]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--c-peach)]"></span>
-              llama-cpp / GGUF
+              llama.cpp CPU (GGUF)
             </div>
           </div>
 
@@ -255,7 +255,7 @@ export const LocalModelsTab: React.FC = () => {
             <div className="text-[10px] text-[var(--c-text-dim)] uppercase tracking-wider font-semibold">Voice Worker</div>
             <div className="flex items-center gap-1.5 font-medium text-[11px] text-sky-400">
               <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
-              faster-whisper
+              whisper.cpp (Q8_0)
             </div>
           </div>
 

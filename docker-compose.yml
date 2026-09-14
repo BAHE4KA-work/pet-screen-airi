@@ -27,7 +27,7 @@ services:
       - overlay-net
 
   # ==========================================================
-  # 2. DEDICATED LLM INFERENCE WORKER (Transformers & GGUF)
+  # 2. DEDICATED LLM INFERENCE WORKER (llama.cpp CPU & GGUF)
   # ==========================================================
   llm-service:
     build:
@@ -44,14 +44,14 @@ services:
     deploy:
       resources:
         limits:
-          memory: 12G
+          memory: 8G
     depends_on:
       - rabbitmq
     networks:
       - overlay-net
 
   # ==========================================================
-  # 3. DEDICATED SPEECH-TO-TEXT WORKER (Faster-Whisper & VAD)
+  # 3. DEDICATED SPEECH-TO-TEXT WORKER (whisper.cpp GGML Q8_0)
   # ==========================================================
   stt-service:
     build:
@@ -68,7 +68,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3G
+          memory: 2G
     depends_on:
       - rabbitmq
     networks:

@@ -68,14 +68,16 @@ async def handle_stt_load(req: ModelLoadRequest):
 
 @app.on_startup
 async def on_startup():
-    logger.info("Voice Worker started successfully. Initializing Whisper model...")
-    files = [f for f in os.listdir(stt_models_path) if f.endswith((".bin", ".onnx", ".pt"))]
+    logger.info("Voice Worker started successfully. Initializing whisper.cpp model...")
+    files = [f for f in os.listdir(stt_models_path) if f.endswith(".bin")]
     if files:
-        logger.info(f"Auto-loading STT model: {files[0]}")
-        engine.load_model(files[0])
+        # Prefer ggml-medium-q8_0.bin if present
+        target_model = "ggml-medium-q8_0.bin" if "ggml-medium-q8_0.bin" in files else files[0]
+        logger.info(f"Auto-loading whisper.cpp model: {target_model}")
+        engine.load_model(target_model)
     else:
-        logger.info("Using default 'base' Whisper model configuration.")
-        engine.load_model("base")
+        logger.info(f"Checking default '{settings.DEFAULT_STT_MODEL}' Whisper model configuration.")
+        engine.load_model(settings.DEFAULT_STT_MODEL)
 
 if __name__ == "__main__":
     asyncio.run(app.run())

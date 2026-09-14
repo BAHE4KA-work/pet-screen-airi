@@ -11,9 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install lightweight PyTorch CPU build to avoid downloading 3GB+ CUDA packages and timeout errors
-RUN pip install --no-cache-dir --default-timeout=1000 --retries 5 --prefer-binary \
-    torch --index-url https://download.pytorch.org/whl/cpu
+# Install prebuilt CPU llama-cpp-python without PyTorch or CUDA dependencies
+ENV CMAKE_ARGS="-DGGML_CUDA=off"
+RUN pip install --no-cache-dir --default-timeout=1000 --retries 5 \
+    llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu || \
+    pip install --no-cache-dir --default-timeout=1000 --retries 5 llama-cpp-python
 
 COPY services/llm_worker/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --default-timeout=1000 --retries 5 --prefer-binary -r requirements.txt

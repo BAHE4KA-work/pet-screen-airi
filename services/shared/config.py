@@ -17,6 +17,6 @@ class Settings(BaseSettings):
     
     # Defaults
     DEFAULT_LLM_MODEL: str = "functiongemma-7b-tools-v2.1.Q4_K_M.gguf"
-    DEFAULT_STT_MODEL: str = "whisper-base-ru.bin"
+    DEFAULT_STT_MODEL: str = "ggml-medium-q8_0.bin"
 
 settings = Settings()

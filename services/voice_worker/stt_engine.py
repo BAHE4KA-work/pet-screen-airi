@@ -3,6 +3,7 @@ import io
 import time
 import base64
 import tempfile
+import subprocess
 from typing import Optional, Dict, Any
 from services.shared.logger import setup_logger
 
@@ -14,65 +15,88 @@ class STTEngine:
         self.model = None
         self.active_filename: Optional[str] = None
 
-    def load_model(self, model_size_or_file: str = "base", device: str = "cpu", compute_type: str = "int8") -> bool:
+    def load_model(self, model_size_or_file: str = "ggml-medium-q8_0.bin", n_threads: int = 4) -> bool:
         full_path = os.path.join(self.models_dir, model_size_or_file)
         target = full_path if os.path.exists(full_path) else model_size_or_file
 
-        logger.info(f"Loading Whisper STT model: {target} (device={device}, compute_type={compute_type})")
+        logger.info(f"Loading whisper.cpp STT model: {target} (threads={n_threads})")
         start_time = time.time()
 
         try:
-            from faster_whisper import WhisperModel
-            self.model = WhisperModel(target, device=device, compute_type=compute_type)
+            from pywhispercpp.model import Model
+            # If target exists as a GGML bin file or standard model identifier
+            self.model = Model(target, n_threads=n_threads)
             self.active_filename = model_size_or_file
-            logger.info(f"Whisper STT model loaded in {time.time() - start_time:.2f}s")
+            logger.info(f"whisper.cpp STT model loaded successfully in {time.time() - start_time:.2f}s")
             return True
         except Exception as e:
-            logger.warning(f"faster-whisper loading failed ({e}). Enabling lightweight STT fallback.")
-            self.model = "fallback"
-            self.active_filename = model_size_or_file
-            return True
+            logger.warning(f"pywhispercpp loading failed or file '{target}' not yet downloaded ({e}). Enabling STT standby.")
+            self.model = None
+            self.active_filename = None
+            return False
 
     def transcribe_base64(self, audio_base64: str, language: str = "ru") -> Dict[str, Any]:
         start_time = time.time()
-        raw_bytes = base64.b64decode(audio_base64)
+        try:
+            raw_bytes = base64.b64decode(audio_base64)
+        except Exception as e:
+            logger.error(f"Failed to decode base64 audio: {e}")
+            return {"text": "", "duration_sec": 0.0, "confidence": 0.0}
 
         if not raw_bytes or len(raw_bytes) < 100:
             return {"text": "", "duration_sec": 0.0, "confidence": 0.0}
 
+        tmp_in = None
+        tmp_wav = None
+
         try:
-            if hasattr(self.model, "transcribe"):
-                # Save to temp file for faster-whisper decoding
-                with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
-                    tmp.write(raw_bytes)
-                    tmp_path = tmp.name
+            # 1. Write incoming stream to temp file
+            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+                f.write(raw_bytes)
+                tmp_in = f.name
 
-                try:
-                    segments, info = self.model.transcribe(
-                        tmp_path,
-                        beam_size=5,
-                        language=language if language != "auto" else None,
-                        vad_filter=True
-                    )
-                    text_parts = [segment.text.strip() for segment in segments]
-                    final_text = " ".join(text_parts).strip()
-                    duration = round(time.time() - start_time, 2)
+            # 2. Convert to 16kHz mono WAV via ffmpeg (strictly required by whisper.cpp)
+            tmp_wav = tmp_in + ".16k.wav"
+            cmd = [
+                "ffmpeg", "-y", "-i", tmp_in,
+                "-ar", "16000",
+                "-ac", "1",
+                "-c:a", "pcm_s16le",
+                tmp_wav
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
-                    logger.info(f"Transcribed audio ({len(raw_bytes)} bytes) in {duration}s -> '{final_text}'")
-                    return {
-                        "text": final_text,
-                        "duration_sec": duration,
-                        "confidence": float(getattr(info, 'language_probability', 0.95))
-                    }
-                finally:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-            else:
+            # 3. Transcribe via whisper.cpp
+            if self.model is not None:
+                segments = self.model.transcribe(
+                    tmp_wav,
+                    language=language if language != "auto" else "ru"
+                )
+                text_parts = [seg.text.strip() for seg in segments if hasattr(seg, 'text') and seg.text]
+                final_text = " ".join(text_parts).strip()
+                duration = round(time.time() - start_time, 2)
+
+                logger.info(f"whisper.cpp transcribed audio in {duration}s -> '{final_text}'")
                 return {
-                    "text": "Тестовая расшифровка (Fallback)",
-                    "duration_sec": 0.1,
-                    "confidence": 0.9
+                    "text": final_text,
+                    "duration_sec": duration,
+                    "confidence": 0.95
                 }
+            else:
+                logger.warning("whisper.cpp model not loaded yet. Please download ggml-medium-q8_0.bin into /models/stt/.")
+                return {
+                    "text": "Модель Whisper не загружена. Поместите ggml-medium-q8_0.bin в папку models/stt",
+                    "duration_sec": 0.1,
+                    "confidence": 0.0
+                }
+
         except Exception as e:
-            logger.error(f"Error during audio transcription: {e}")
+            logger.error(f"Error during whisper.cpp audio transcription: {e}")
             return {"text": "", "duration_sec": 0.0, "confidence": 0.0}
+        finally:
+            if tmp_in and os.path.exists(tmp_in):
+                try: os.unlink(tmp_in)
+                except Exception: pass
+            if tmp_wav and os.path.exists(tmp_wav):
+                try: os.unlink(tmp_wav)
+                except Exception: pass
