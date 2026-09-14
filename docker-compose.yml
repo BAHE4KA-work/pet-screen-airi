@@ -21,8 +21,10 @@ services:
       - ./storage:/app/storage
       - ./models:/models
     depends_on:
-      - postgres
-      - rabbitmq
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     networks:
       - overlay-net
 
@@ -46,7 +48,8 @@ services:
         limits:
           memory: 8G
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
     networks:
       - overlay-net
 
@@ -70,7 +73,8 @@ services:
         limits:
           memory: 2G
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
     networks:
       - overlay-net
 
@@ -89,6 +93,12 @@ services:
       - RABBITMQ_DEFAULT_PASS=guest
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     networks:
       - overlay-net
 
@@ -107,6 +117,12 @@ services:
       - POSTGRES_DB=overlay_db
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d overlay_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
     networks:
       - overlay-net
 

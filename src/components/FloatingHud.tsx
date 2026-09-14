@@ -21,6 +21,7 @@ import { soundEffects } from '../utils/audioEffects';
 import { getSmartQuerySuggestions, SuggestionMatch } from '../utils/fuzzySearch';
 import { electronBridge } from '../utils/electronBridge';
 import { audioDevicesManager, AudioDeviceOption } from '../utils/audioDevices';
+import { actionLogger } from '../utils/actionLogger';
 import { AudioVolumeVisualizer } from './ui/AudioVolumeVisualizer';
 
 interface FloatingHudProps {
@@ -186,6 +187,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
     setResultData(null);
     setActiveToolInvocation(null);
     setSuggestions([]);
+    actionLogger.info('llm', `Пользовательский запрос: "${trimmed}"`);
 
     try {
       // Use SSE streaming for real-time tool execution notifications
@@ -198,6 +200,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       if (!res.ok || !res.body) {
         const directRes = await onExecuteQuery(trimmed);
         setResultData(directRes);
+        actionLogger.success('llm', 'Запрос выполнен успешно', directRes);
         soundEffects.playCompletionPing();
         return;
       }
@@ -223,6 +226,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
             const data = JSON.parse(dataMatch[1].trim());
 
             if (event === 'tool_invoked') {
+              actionLogger.info('tool', `Вызов инструмента: ${data.toolName}`, data.arguments);
               setActiveToolInvocation({
                 toolName: data.toolName,
                 arguments: data.arguments,
@@ -231,6 +235,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               soundEffects.playToolCallCue();
             } else if (event === 'completed') {
               receivedFinal = true;
+              actionLogger.success('tool', `Инструмент завершил работу`, data);
               soundEffects.playCompletionPing();
               if (data.view && onSpawnView) {
                 onSpawnView(data.view);
@@ -241,10 +246,12 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               // Clear prompt on successful tool execution into view
               setPrompt('');
             } else if (event === 'no_tool') {
+              actionLogger.warn('llm', 'Модель не нашла подходящего инструмента для запроса', data);
               setErrorData(data.message || 'Модель не смогла подобрать инструмент для этого запроса.');
               receivedFinal = true;
               soundEffects.playWarningCue();
             } else if (event === 'error') {
+              actionLogger.error('llm', `Ошибка выполнения: ${data.error}`, data);
               setErrorData(data.error);
               receivedFinal = true;
               soundEffects.playWarningCue();
@@ -256,6 +263,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       if (!receivedFinal) {
         const fallbackRes = await onExecuteQuery(trimmed);
         soundEffects.playCompletionPing();
+        actionLogger.success('llm', 'Запрос успешно обработан через фолбэк', fallbackRes);
         if (fallbackRes?.view && onSpawnView) {
           onSpawnView(fallbackRes.view);
           setPrompt('');
@@ -266,6 +274,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         }
       }
     } catch (err: any) {
+      actionLogger.error('llm', `Сбой обработки запроса: ${err.message || 'Ошибка выполнения'}`);
       setErrorData(err.message || 'Ошибка выполнения');
       soundEffects.playWarningCue();
     } finally {
@@ -357,6 +366,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         setActiveAudioStream(null);
         setIsRecording(false);
         setIsSpeaking(false);
+        actionLogger.info('voice', 'Запись микрофона завершена, отправка в whisper.cpp...');
 
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         if (audioBlob.size < 100) return;
@@ -374,10 +384,17 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
             const data = await res.json();
             if (data.text) {
               setPrompt(data.text);
+              actionLogger.success('voice', `whisper.cpp распознал: "${data.text}"`, {
+                duration_sec: data.duration_sec,
+                confidence: data.confidence
+              });
               soundEffects.playCompletionPing();
               inputRef.current?.focus();
+            } else {
+              actionLogger.warn('voice', 'Речь не распознана или была слишком тихой');
             }
-          } catch (err) {
+          } catch (err: any) {
+            actionLogger.error('voice', `Ошибка вызова STT whisper.cpp: ${err.message || err}`);
             console.error('STT error:', err);
             soundEffects.playWarningCue();
           }
@@ -386,10 +403,14 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
 
       mediaRecorder.start();
       setIsRecording(true);
+      actionLogger.info('voice', 'Начата запись с микрофона', {
+        deviceId: selectedDeviceId || 'default'
+      });
       soundEffects.playToolCallCue();
-    } catch (err) {
+    } catch (err: any) {
       setIsRecording(false);
       setActiveAudioStream(null);
+      actionLogger.error('voice', `Не удалось получить доступ к микрофону: ${err.message || err}`);
       console.error('Audio capture error:', err);
       soundEffects.playWarningCue();
     }

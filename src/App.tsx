@@ -9,6 +9,8 @@ import { FloatingHud } from './components/FloatingHud';
 import { SettingsModal } from './components/SettingsModal';
 import { DesktopBackground } from './components/DesktopBackground';
 import { ViewRenderer } from './components/views/ViewRenderer';
+import { Taskbar } from './components/Taskbar';
+import { ActionLogsDrawer } from './components/ActionLogsDrawer';
 import {
   ModelStatus,
   ModuleGroup,
@@ -22,6 +24,7 @@ import { soundEffects } from './utils/audioEffects';
 import { electronBridge } from './utils/electronBridge';
 import { themeManager } from './utils/themeManager';
 import { hotkeyManager } from './utils/hotkeyManager';
+import { actionLogger } from './utils/actionLogger';
 
 export default function App() {
   const [status, setStatus] = useState<ModelStatus | null>(null);
@@ -44,6 +47,7 @@ export default function App() {
   const [hudVisible, setHudVisible] = useState(true);
   const [isHudPinned, setIsHudPinned] = useState(false);
   const [views, setViews] = useState<ViewSpec[]>([]);
+  const [isActionLogsOpen, setIsActionLogsOpen] = useState(false);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState('tools');
@@ -226,18 +230,32 @@ export default function App() {
         position: newView.position?.x ? newView.position : { x: defaultX, y: defaultY }
       };
 
+      actionLogger.info('ui', `Открыто окно: ${newView.title || newView.type} (id: ${newView.id})`, newView);
       return [...prev, positionedView];
     });
   }, []);
 
   const handleTogglePinView = useCallback((id: string) => {
     setViews(prev =>
-      prev.map(v => (v.id === id ? { ...v, pinned: !v.pinned } : v))
+      prev.map(v => {
+        if (v.id === id) {
+          const nextPinned = !v.pinned;
+          actionLogger.info('ui', `Окно "${v.title || v.type}" ${nextPinned ? 'закреплено' : 'откреплено'}`);
+          return { ...v, pinned: nextPinned };
+        }
+        return v;
+      })
     );
   }, []);
 
   const handleCloseView = useCallback((id: string) => {
-    setViews(prev => prev.filter(v => v.id !== id));
+    setViews(prev => {
+      const closing = prev.find(v => v.id === id);
+      if (closing) {
+        actionLogger.info('ui', `Закрыто окно: ${closing.title || closing.type}`);
+      }
+      return prev.filter(v => v.id !== id);
+    });
   }, []);
 
   const handlePositionChange = useCallback((id: string, pos: { x: number; y: number }) => {
@@ -281,8 +299,14 @@ export default function App() {
       setCurrentChecksum(modulesRes.currentChecksum || '');
       setLogs(logsRes.logs || []);
       if (logsRes.stats) setStats(logsRes.stats);
+
+      actionLogger.info('system', `Загружены инструменты (${modulesRes.tools?.length || 0}) и статус модели`, {
+        modelLoaded: statusRes?.loaded,
+        toolsCount: modulesRes.tools?.length || 0
+      });
     } catch (err) {
       console.error('Failed to load initial data:', err);
+      actionLogger.error('system', 'Ошибка загрузки данных конфигурации', err);
     }
   }, []);
 
@@ -624,6 +648,58 @@ export default function App() {
         setDesktopOpacity={setDesktopOpacity}
         showDesktop={showDesktop}
         setShowDesktop={setShowDesktop}
+      />
+
+      {/* Persistent Bottom Taskbar (Панель задач) */}
+      <Taskbar
+        hudVisible={hudVisible}
+        onToggleHud={() => {
+          const next = !hudVisible;
+          setHudVisible(next);
+          actionLogger.info('ui', next ? 'HUD оверлей показан (через панель задач)' : 'HUD оверлей скрыт (через панель задач)');
+        }}
+        views={views}
+        onFocusView={id => {
+          // Bring view to front
+          setViews(prev => {
+            const item = prev.find(v => v.id === id);
+            if (!item) return prev;
+            actionLogger.info('ui', `Фокус переведён на окно: ${item.title || item.type}`);
+            return [...prev.filter(v => v.id !== id), item];
+          });
+        }}
+        onCloseView={handleCloseView}
+        onSpawnQuickTime={() => {
+          handleSpawnView({
+            id: `view-time-${Date.now()}`,
+            type: 'time',
+            title: 'Системное время',
+            pinned: false,
+            data: {
+              timestamp: Date.now(),
+              format: '24h',
+              showSeconds: true,
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            }
+          });
+          soundEffects.playCompletionPing();
+        }}
+        onOpenSettings={openSettings}
+        onOpenActionLogs={() => setIsActionLogsOpen(true)}
+        windowMode={windowMode}
+        onToggleWindowMode={toggleWindowMode}
+        showDesktop={showDesktop}
+        onToggleDesktop={() => {
+          const next = !showDesktop;
+          setShowDesktop(next);
+          actionLogger.info('ui', next ? 'Отображение фона рабочего стола включено' : 'Фон рабочего стола скрыт (чистый оверлей)');
+        }}
+      />
+
+      {/* Live System Action Logs Drawer */}
+      <ActionLogsDrawer
+        isOpen={isActionLogsOpen}
+        onClose={() => setIsActionLogsOpen(false)}
       />
     </div>
   );

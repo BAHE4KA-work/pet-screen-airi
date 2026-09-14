@@ -79,5 +79,21 @@ async def on_startup():
         logger.info(f"Checking default '{settings.DEFAULT_STT_MODEL}' Whisper model configuration.")
         engine.load_model(settings.DEFAULT_STT_MODEL)
 
+async def run_with_retry():
+    max_retries = 20
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"Connecting to RabbitMQ at {settings.RABBITMQ_URL} (attempt {attempt}/{max_retries})...")
+            await broker.connect()
+            logger.info("Successfully established connection to RabbitMQ.")
+            await app.run()
+            break
+        except Exception as e:
+            if attempt >= max_retries:
+                logger.error(f"RabbitMQ connection failed permanently after {max_retries} attempts: {e}")
+                raise
+            logger.warning(f"RabbitMQ broker is warming up ({e}). Retrying in 3 seconds...")
+            await asyncio.sleep(3)
+
 if __name__ == "__main__":
-    asyncio.run(app.run())
+    asyncio.run(run_with_retry())
