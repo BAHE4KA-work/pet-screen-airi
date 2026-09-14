@@ -67,8 +67,8 @@ app.post('/api/modules/:module/manifest', (req, res) => {
 // SSE Event stream client tracking
 const sseClients = new Set<express.Response>();
 
-export function broadcastServerEvent(eventType: string, data: Record<string, unknown>) {
-  const payload = `event: ${eventType}\ndata: ${JSON.stringify({ ...data, timestamp: new Date().toISOString() })}\n\n`;
+export function broadcastServerEvent(eventType: string, data: any) {
+  const payload = `event: ${eventType}\ndata: ${JSON.stringify({ ...(typeof data === 'object' ? data : { value: data }), timestamp: new Date().toISOString() })}\n\n`;
   for (const client of sseClients) {
     try {
       client.write(payload);
@@ -79,7 +79,7 @@ export function broadcastServerEvent(eventType: string, data: Record<string, unk
 }
 
 // API: Server-Sent Events (SSE) for Real-Time Server Updates
-app.get('/api/events', (req, res) => {
+app.get(['/api/events', '/api/events/live'], (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -486,23 +486,63 @@ app.post('/api/stt/stream', async (req, res) => {
     }
 
     const buffer = Buffer.from(base64Audio, 'base64');
-    console.log(`[STT Stream] Processing stream ${streamId || 'default'} chunk #${chunkIndex ?? 0} (${buffer.length} bytes, final: ${Boolean(isFinal)})`);
+    console.log(`[STT Stream] Stream ${streamId || 'default'} chunk #${chunkIndex ?? 0} (${buffer.length} bytes, final: ${Boolean(isFinal)})`);
+
+    if (!isFinal) {
+      // Intermediate chunk: acknowledge receipt immediately so CPU worker is not clogged
+      broadcastServerEvent('stt_stream_chunk', {
+        streamId: streamId || 'default',
+        chunkIndex: chunkIndex ?? 0,
+        isFinal: false,
+        bytes: buffer.length,
+        status: 'recording'
+      });
+
+      res.json({
+        success: true,
+        streamId: streamId || 'default',
+        chunkIndex: chunkIndex ?? 0,
+        isFinal: false,
+        text: ''
+      });
+      return;
+    }
+
+    // Final audio segment: run Whisper speech-to-text
+    broadcastServerEvent('stt_status', {
+      streamId: streamId || 'default',
+      status: 'transcribing',
+      message: 'whisper.cpp распознаёт речь...'
+    });
 
     const result = await sttService.transcribeAudio(buffer, 'stream.webm');
 
     broadcastServerEvent('stt_stream_chunk', {
       streamId: streamId || 'default',
       chunkIndex: chunkIndex ?? 0,
-      isFinal: Boolean(isFinal),
+      isFinal: true,
       text: result.text || '',
       source: result.source
+    });
+
+    broadcastServerEvent('stt_result', {
+      streamId: streamId || 'default',
+      text: result.text || '',
+      isFinal: true,
+      source: result.source
+    });
+
+    broadcastServerEvent('stt_status', {
+      streamId: streamId || 'default',
+      status: 'completed',
+      text: result.text || ''
     });
 
     res.json({
       success: true,
       streamId: streamId || 'default',
       chunkIndex: chunkIndex ?? 0,
-      isFinal: Boolean(isFinal),
+      isFinal: true,
       text: result.text || '',
       duration_sec: result.duration_sec,
       confidence: result.confidence,

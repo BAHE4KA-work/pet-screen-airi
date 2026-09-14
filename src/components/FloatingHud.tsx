@@ -14,7 +14,8 @@ import {
   History,
   CornerDownLeft,
   Cpu,
-  ChevronDown
+  ChevronDown,
+  Activity
 } from 'lucide-react';
 import { ModelStatus, ViewSpec } from '../types';
 import { soundEffects } from '../utils/audioEffects';
@@ -64,6 +65,9 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
 
   // Voice recording & microphone state
   const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcribingStatus, setTranscribingStatus] = useState<string>('');
+  const [transcribingSeconds, setTranscribingSeconds] = useState(0);
   const [activeAudioStream, setActiveAudioStream] = useState<MediaStream | null>(null);
   const [audioDevices, setAudioDevices] = useState<AudioDeviceOption[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => audioDevicesManager.getStoredDeviceId());
@@ -91,6 +95,64 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
   // Auto-focus input
   useEffect(() => {
     inputRef.current?.focus();
+  }, []);
+
+  // Transcribing seconds counter
+  useEffect(() => {
+    let timer: any;
+    if (isTranscribing) {
+      setTranscribingSeconds(0);
+      timer = setInterval(() => {
+        setTranscribingSeconds(prev => prev + 1);
+      }, 1000);
+    } else {
+      setTranscribingSeconds(0);
+    }
+    return () => clearInterval(timer);
+  }, [isTranscribing]);
+
+  // Listen to Server-Sent Events for real-time STT updates
+  useEffect(() => {
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/events');
+      es.addEventListener('stt_status', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.status === 'transcribing') {
+            setIsTranscribing(true);
+            setTranscribingStatus(data.message || 'whisper.cpp распознаёт речь...');
+          } else if (data.status === 'completed') {
+            setIsTranscribing(false);
+            setTranscribingStatus('');
+          }
+        } catch {
+          // ignore
+        }
+      });
+
+      es.addEventListener('stt_result', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.text) {
+            setPrompt(data.text);
+            setIsTranscribing(false);
+            setTranscribingStatus('');
+            soundEffects.playCompletionPing();
+            inputRef.current?.focus();
+            actionLogger.success('voice', `whisper.cpp распознал (SSE): "${data.text}"`);
+          }
+        } catch {
+          // ignore
+        }
+      });
+    } catch (err) {
+      console.warn('[FloatingHud] SSE setup error:', err);
+    }
+
+    return () => {
+      es?.close();
+    };
   }, []);
 
   // Load available microphones
@@ -297,6 +359,10 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
   // Local Voice STT handler with dynamic speech recognition
   const handleToggleVoice = async () => {
     if (isRecording) {
+      setIsRecording(false);
+      setIsSpeaking(false);
+      setIsTranscribing(true);
+      setTranscribingStatus('Распознавание речи whisper.cpp...');
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
         mediaRecorderRef.current.stop();
       }
@@ -312,8 +378,6 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         activeAudioStream.getTracks().forEach(t => t.stop());
         setActiveAudioStream(null);
       }
-      setIsRecording(false);
-      setIsSpeaking(false);
       return;
     }
 
@@ -408,10 +472,16 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         setActiveAudioStream(null);
         setIsRecording(false);
         setIsSpeaking(false);
-        actionLogger.info('voice', 'Запись микрофона завершена, отправка финального фрагмента в whisper.cpp...');
+        setIsTranscribing(true);
+        setTranscribingStatus('Распознавание речи whisper.cpp...');
+        actionLogger.info('voice', 'Запись микрофона завершена, отправка аудио в whisper.cpp...');
 
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        if (audioBlob.size < 100) return;
+        if (audioBlob.size < 100) {
+          setIsTranscribing(false);
+          setTranscribingStatus('');
+          return;
+        }
 
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
@@ -446,6 +516,9 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
             actionLogger.error('voice', `Ошибка вызова STT whisper.cpp: ${err.message || err}`);
             console.error('STT error:', err);
             soundEffects.playWarningCue();
+          } finally {
+            setIsTranscribing(false);
+            setTranscribingStatus('');
           }
         };
       };
@@ -574,16 +647,37 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         {/* Query Input Box */}
         <form onSubmit={handleSubmit} className="p-3 pb-2 relative">
           <div
-            className="flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all"
+            id="hud-input-row"
+            className="flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all relative overflow-hidden"
             style={{
               backgroundColor: 'var(--c-bg-tertiary)',
-              borderColor: loading ? 'var(--c-peach)' : 'var(--c-border)'
+              borderColor: isTranscribing
+                ? 'var(--c-peach)'
+                : loading
+                ? 'var(--c-peach)'
+                : isRecording
+                ? '#f97316'
+                : 'var(--c-border)',
+              boxShadow: isTranscribing
+                ? '0 0 16px rgba(255, 140, 66, 0.35)'
+                : isRecording
+                ? '0 0 16px rgba(249, 115, 22, 0.3)'
+                : 'none'
             }}
           >
-            <Sparkles
-              className="w-4 h-4 shrink-0 transition-colors"
-              style={{ color: prompt ? 'var(--c-peach)' : 'var(--c-text-dim)' }}
-            />
+            {isTranscribing ? (
+              <Loader2 className="w-4 h-4 shrink-0 animate-spin text-[var(--c-peach)]" />
+            ) : isRecording ? (
+              <span className="relative flex h-3 w-3 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+              </span>
+            ) : (
+              <Sparkles
+                className="w-4 h-4 shrink-0 transition-colors"
+                style={{ color: prompt ? 'var(--c-peach)' : 'var(--c-text-dim)' }}
+              />
+            )}
 
             <input
               ref={inputRef}
@@ -594,13 +688,43 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               onBlur={() => setTimeout(() => setIsInputFocused(false), 200)}
               onChange={e => setPrompt(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Спросите что-нибудь или вызовите инструмент..."
+              placeholder={
+                isTranscribing
+                  ? `Распознавание речи whisper.cpp... (${transcribingSeconds}с)`
+                  : isRecording
+                  ? 'Говорите... идёт запись звука'
+                  : 'Спросите что-нибудь или вызовите инструмент...'
+              }
               className="w-full bg-transparent text-sm focus:outline-hidden placeholder:text-[var(--c-text-dim)]"
               style={{ color: 'var(--c-text)' }}
-              disabled={loading}
+              disabled={loading || isTranscribing}
             />
 
-            {prompt && (
+            {/* Recognizing STT Active Indicator Badge */}
+            {isTranscribing && (
+              <div
+                id="hud-stt-recognizing-badge"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--c-peach)]/20 border border-[var(--c-peach)]/50 text-[var(--c-peach)] text-xs shrink-0 animate-pulse font-medium select-none shadow-xs"
+                title="whisper.cpp выполняет инференс на CPU"
+              >
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--c-peach)]" />
+                <span className="font-semibold">Распознавание</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-sm bg-[var(--c-peach)]/30 text-[var(--c-peach-light)]">{transcribingSeconds}с</span>
+              </div>
+            )}
+
+            {/* Recording Active Badge */}
+            {isRecording && !isTranscribing && (
+              <div
+                id="hud-stt-recording-badge"
+                className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 text-[11px] shrink-0 animate-pulse font-medium select-none"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                <span>Запись</span>
+              </div>
+            )}
+
+            {prompt && !isTranscribing && (
               <button
                 type="button"
                 onClick={handleClear}
@@ -626,17 +750,32 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
                 type="button"
                 id="hud-voice-btn"
                 onClick={handleToggleVoice}
-                title={isRecording ? 'Остановить запись голоса' : 'Голосовой ввод'}
+                disabled={isTranscribing}
+                title={
+                  isTranscribing
+                    ? 'whisper.cpp распознаёт речь...'
+                    : isRecording
+                    ? 'Остановить запись голоса'
+                    : 'Голосовой ввод'
+                }
                 className={`p-1.5 rounded-lg text-xs transition-all flex items-center gap-1 ${
-                  isRecording
+                  isTranscribing
+                    ? 'bg-[var(--c-peach)]/20 text-[var(--c-peach)] cursor-wait'
+                    : isRecording
                     ? 'bg-orange-500 text-white animate-pulse'
                     : 'text-[var(--c-text-muted)] hover:text-[var(--c-peach)] hover:bg-white/5'
                 }`}
               >
-                {isRecording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                {isTranscribing ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--c-peach)]" />
+                ) : isRecording ? (
+                  <MicOff className="w-3.5 h-3.5" />
+                ) : (
+                  <Mic className="w-3.5 h-3.5" />
+                )}
               </button>
 
-              {audioDevices.length > 1 && !isRecording && (
+              {audioDevices.length > 1 && !isRecording && !isTranscribing && (
                 <button
                   type="button"
                   onClick={() => setShowMicMenu(!showMicMenu)}
@@ -645,6 +784,13 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
                 >
                   <ChevronDown className="w-2.5 h-2.5" />
                 </button>
+              )}
+
+              {/* Bottom scan line animation during transcription */}
+              {isTranscribing && (
+                <div className="absolute -bottom-2.5 -left-96 -right-96 h-0.5 bg-[var(--c-peach)]/30 overflow-hidden pointer-events-none">
+                  <div className="h-full bg-[var(--c-peach)] animate-pulse w-full" />
+                </div>
               )}
 
               {/* Mic Device Selector Dropdown */}
@@ -706,6 +852,20 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               )}
             </button>
           </div>
+
+          {/* Recognition live status indicator row */}
+          {isTranscribing && (
+            <div
+              id="hud-transcribing-status-bar"
+              className="flex items-center justify-between px-2 pt-1.5 text-[11px] font-mono text-[var(--c-peach)]"
+            >
+              <div className="flex items-center gap-1.5">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>whisper.cpp: декодирование аудио на CPU...</span>
+              </div>
+              <span className="text-[10px] text-[var(--c-text-dim)]">Прошло: {transcribingSeconds}с (таймаут: 120с)</span>
+            </div>
+          )}
 
           {/* Autocomplete & Fuzzy History Suggestions (Item 4) */}
           {suggestions.length > 0 && isInputFocused && !loading && (

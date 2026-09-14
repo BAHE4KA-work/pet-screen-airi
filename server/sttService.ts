@@ -31,6 +31,7 @@ class STTService {
   private rabbitConnection: any = null;
   private rabbitChannel: any = null;
   private rabbitInitializing: boolean = false;
+  public isBusy: boolean = false;
 
   constructor() {
     // Sync with local models manager active selection
@@ -104,16 +105,20 @@ class STTService {
         model_file: this.config.modelFile
       };
 
+      this.isBusy = true;
       return await new Promise((resolve) => {
         const timeout = setTimeout(() => {
           cleanup();
+          this.isBusy = false;
+          console.warn(`[STTService] Request ${corrId} timed out after 120s waiting for whisper.cpp`);
           resolve(null);
-        }, 15000);
+        }, 120000);
 
         let consumerTag: string | null = null;
 
         const cleanup = () => {
           clearTimeout(timeout);
+          this.isBusy = false;
           if (consumerTag) {
             ch.cancel(consumerTag).catch(() => {});
           }
@@ -128,6 +133,7 @@ class STTService {
               cleanup();
               try {
                 const response = JSON.parse(msg.content.toString());
+                console.log(`[STTService] whisper.cpp response for ${corrId}: "${response.text || ''}" (${response.duration_sec ?? 0}s)`);
                 resolve({
                   text: response.text || '',
                   language: response.language || 'ru',
@@ -135,7 +141,8 @@ class STTService {
                   confidence: response.confidence,
                   source: 'whisper_cpp'
                 });
-              } catch {
+              } catch (err: any) {
+                console.error(`[STTService] Failed to parse whisper.cpp response:`, err);
                 resolve(null);
               }
             }
@@ -143,6 +150,7 @@ class STTService {
           { noAck: true }
         ).then((sub: any) => {
           consumerTag = sub.consumerTag;
+          console.log(`[STTService] Dispatched ${corrId} (${audioBuffer.length} bytes) to overlay.tasks.stt.inbound`);
           ch.sendToQueue(
             'overlay.tasks.stt.inbound',
             Buffer.from(JSON.stringify(requestPayload)),
@@ -152,7 +160,8 @@ class STTService {
               persistent: false
             }
           );
-        }).catch(() => {
+        }).catch((err: any) => {
+          console.error(`[STTService] Failed to setup queue consumer:`, err);
           cleanup();
           resolve(null);
         });

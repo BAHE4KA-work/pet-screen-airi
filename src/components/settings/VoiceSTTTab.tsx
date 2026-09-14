@@ -195,33 +195,40 @@ export const VoiceSTTTab: React.FC = () => {
           const reader = new FileReader();
           reader.readAsDataURL(blob);
           reader.onloadend = async () => {
-            const base64 = (reader.result as string).split(',')[1] || '';
-            const res = await fetch('/api/stt/stream', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                streamId: streamIdRef.current,
-                chunkIndex: chunkIndexRef.current++,
-                base64Audio: base64,
-                isFinal: true,
-                language: config.language || 'ru',
-                modelFile: config.modelFile
-              })
-            });
-            const data = await res.json();
-            setIsTranscribing(false);
-            setStreamStatusText('');
-            if (data.text) {
-              setTestTranscript(data.text);
-              actionLogger.success('voice', `Тест микрофона: whisper.cpp успешно распознал речь: "${data.text}"`, {
-                duration_sec: data.duration_sec,
-                confidence: data.confidence,
-                source: data.source
+            try {
+              const base64 = (reader.result as string).split(',')[1] || '';
+              const res = await fetch('/api/stt/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  streamId: streamIdRef.current,
+                  chunkIndex: chunkIndexRef.current++,
+                  base64Audio: base64,
+                  isFinal: true,
+                  language: config.language || 'ru',
+                  modelFile: config.modelFile
+                })
               });
-              soundEffects.playCompletionPing();
-            } else {
-              setTestTranscript('(Речь не распознана. Проверьте правильность выбранного микрофона и громкость)');
-              actionLogger.warn('voice', 'Тест микрофона: речь не распознана или была слишком тихой');
+              const data = await res.json();
+              setIsTranscribing(false);
+              setStreamStatusText('');
+              if (data.text) {
+                setTestTranscript(data.text);
+                actionLogger.success('voice', `Тест микрофона: whisper.cpp успешно распознал речь: "${data.text}"`, {
+                  duration_sec: data.duration_sec,
+                  confidence: data.confidence,
+                  source: data.source
+                });
+                soundEffects.playCompletionPing();
+              } else {
+                setTestTranscript('(Речь не распознана. Проверьте правильность выбранного микрофона и громкость)');
+                actionLogger.warn('voice', 'Тест микрофона: речь не распознана или была слишком тихой');
+              }
+            } catch (err: any) {
+              setIsTranscribing(false);
+              setStreamStatusText('');
+              setTestTranscript('(Ошибка вызова распознавания аудио)');
+              actionLogger.error('voice', `Тест микрофона: ошибка ответа бэкенда: ${err.message || err}`);
             }
           };
         } catch (err: any) {
