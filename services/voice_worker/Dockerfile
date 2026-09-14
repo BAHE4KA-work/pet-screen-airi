@@ -8,8 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install lightweight CPU builds for torch and torchaudio
+RUN pip install --no-cache-dir --default-timeout=1000 --retries 5 \
+    torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
 COPY services/voice_worker/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=1000 --retries 5 -r requirements.txt
 
 COPY ./services/shared /app/services/shared
 COPY ./services/voice_worker /app/services/voice_worker
