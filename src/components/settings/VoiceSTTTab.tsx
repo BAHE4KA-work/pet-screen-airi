@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, Check, RotateCw, AlertCircle, Square, MicOff, Volume2, Radio, Activity, CheckCircle2, Clock } from 'lucide-react';
+import { Mic, Check, RotateCw, AlertCircle, Square, MicOff, Volume2, Radio, Activity, CheckCircle2, Clock, Loader2 } from 'lucide-react';
 import { STTConfig, LocalModelsOverview } from '../../types';
 import { soundEffects } from '../../utils/audioEffects';
 import { audioDevicesManager, AudioDeviceOption } from '../../utils/audioDevices';
@@ -16,7 +16,7 @@ interface WindowTestItem {
   text: string;
   durationSec?: number;
   rms?: number;
-  status: 'recording' | 'processing' | 'completed' | 'skipped_silence';
+  status: 'processing' | 'completed';
 }
 
 export const VoiceSTTTab: React.FC = () => {
@@ -37,14 +37,13 @@ export const VoiceSTTTab: React.FC = () => {
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const [saved, setSaved] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [testTranscript, setTestTranscript] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [streamChunksSent, setStreamChunksSent] = useState<number>(0);
   const [streamStatusText, setStreamStatusText] = useState<string>('');
 
   // VAD & Window test state
   const [testWindows, setTestWindows] = useState<WindowTestItem[]>([]);
-  const [activeWindowIndex, setActiveWindowIndex] = useState<number>(0);
+  const [activeWindowIndex, setActiveWindowIndex] = useState<number>(1);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
 
   const vadRecorderRef = useRef<VadAudioRecorder | null>(null);
@@ -108,7 +107,13 @@ export const VoiceSTTTab: React.FC = () => {
         try {
           const data = JSON.parse(e.data);
           if (data.streamId === streamIdRef.current) {
-            setTestWindows(prev => prev.map(w => w.index === data.windowIndex ? { ...w, status: 'processing' } : w));
+            setTestWindows(prev => {
+              const exists = prev.some(w => w.index === data.windowIndex);
+              if (exists) {
+                return prev.map(w => w.index === data.windowIndex ? { ...w, status: 'processing' } : w);
+              }
+              return [...prev, { index: data.windowIndex, text: '', status: 'processing' }];
+            });
             setStreamStatusText(`whisper.cpp: декодирование окна #${data.windowIndex}...`);
           }
         } catch {}
@@ -117,39 +122,31 @@ export const VoiceSTTTab: React.FC = () => {
       es.addEventListener('stt_window_result', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
-          if (data.streamId === streamIdRef.current && data.text?.trim()) {
-            const winText = data.text.trim();
+          if (data.streamId === streamIdRef.current) {
+            const winText = data.text?.trim() || '';
             receivedWindowsRef.current.set(data.windowIndex, winText);
-            setTestWindows(prev => prev.map(w => w.index === data.windowIndex ? {
-              ...w,
-              status: 'completed',
-              text: winText,
-              durationSec: data.duration_sec
-            } : w));
-
-            const fullText = Array.from(receivedWindowsRef.current.entries())
-              .sort(([a], [b]) => a - b)
-              .map(([, t]) => t)
-              .join(' ');
-            setTestTranscript(fullText);
+            setTestWindows(prev => {
+              const exists = prev.some(w => w.index === data.windowIndex);
+              if (exists) {
+                return prev.map(w => w.index === data.windowIndex ? {
+                  ...w,
+                  status: 'completed',
+                  text: winText,
+                  durationSec: data.duration_sec
+                } : w);
+              }
+              return [...prev, {
+                index: data.windowIndex,
+                status: 'completed',
+                text: winText,
+                durationSec: data.duration_sec
+              }];
+            });
             soundEffects.playCompletionPing();
           }
           if (data.isFinal) {
             setIsTranscribing(false);
             setStreamStatusText('');
-          }
-        } catch {}
-      });
-
-      es.addEventListener('stt_window_skipped', (e: MessageEvent) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.streamId === streamIdRef.current) {
-            setTestWindows(prev => prev.map(w => w.index === data.windowIndex ? {
-              ...w,
-              status: 'skipped_silence',
-              text: '(тишина пропущена)'
-            } : w));
           }
         } catch {}
       });
@@ -207,26 +204,18 @@ export const VoiceSTTTab: React.FC = () => {
           })
         });
         const data = await res.json();
-        if (data.status === 'skipped_silence') {
-          setTestWindows(prev => prev.map(w => w.index === winIdx ? {
-            ...w,
-            status: 'skipped_silence',
-            text: '(тишина пропущена — whisper сэкономлен)'
-          } : w));
-        } else if (data.text) {
-          receivedWindowsRef.current.set(winIdx, data.text.trim());
+        if (data.status === 'discarded_silence' || data.status === 'skipped_silence') {
+          // Pure silence - not a valid speech window, do not keep in window items
+          setTestWindows(prev => prev.filter(w => w.index !== winIdx));
+        } else if (data.text !== undefined) {
+          const winText = (data.text || '').trim();
+          receivedWindowsRef.current.set(winIdx, winText);
           setTestWindows(prev => prev.map(w => w.index === winIdx ? {
             ...w,
             status: 'completed',
-            text: data.text.trim(),
+            text: winText,
             durationSec: data.duration_sec
           } : w));
-
-          const full = Array.from(receivedWindowsRef.current.entries())
-            .sort(([a], [b]) => a - b)
-            .map(([, t]) => t)
-            .join(' ');
-          setTestTranscript(full);
         }
       } catch (err: any) {
         console.warn(`[Test Window #${winIdx}] transmission error:`, err);
@@ -278,10 +267,9 @@ export const VoiceSTTTab: React.FC = () => {
       const streamId = `test_vad_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       streamIdRef.current = streamId;
       receivedWindowsRef.current.clear();
-      setTestWindows([{ index: 0, text: '', status: 'recording' }]);
-      setActiveWindowIndex(0);
+      setTestWindows([]);
+      setActiveWindowIndex(1);
       setStreamChunksSent(0);
-      setTestTranscript(null);
       setStreamStatusText(`VAD стрим: пауза >${config.vadPauseMs ?? 300}мс отправляет окно...`);
 
       actionLogger.info('voice', 'Старт проверки микрофона в настройках (VAD-окна, 16кГц WAV)', {
@@ -302,37 +290,21 @@ export const VoiceSTTTab: React.FC = () => {
           },
           onSpeechStart: (winIdx) => {
             setActiveWindowIndex(winIdx);
-            setTestWindows(prev => {
-              if (prev.some(w => w.index === winIdx)) return prev;
-              return [...prev, { index: winIdx, text: '', status: 'recording' }];
-            });
-            actionLogger.info('voice', `Тест микрофона: речь в окне #${winIdx}...`);
+            actionLogger.info('voice', `Тест микрофона: обнаружена речь в окне #${winIdx}...`);
           },
-          onSpeechPause: (winIdx, pauseMs) => {
+          onSpeechPause: () => {
             // Silence pause detected
           },
           onWindowReady: (wavBlob, winIdx, rms, durationSec) => {
             setStreamChunksSent(prev => prev + 1);
-            setTestWindows(prev => prev.map(w => w.index === winIdx ? {
-              ...w,
-              status: 'processing',
-              rms,
-              durationSec
-            } : w));
-            sendTestWindow(wavBlob, winIdx, false);
-          },
-          onWindowSkipped: (winIdx, reason) => {
             setTestWindows(prev => {
-              if (!prev.some(w => w.index === winIdx)) {
-                return [...prev, { index: winIdx, text: '(тишина пропущена)', status: 'skipped_silence' }];
+              const existing = prev.find(w => w.index === winIdx);
+              if (existing) {
+                return prev.map(w => w.index === winIdx ? { ...w, status: 'processing', durationSec, rms } : w);
               }
-              return prev.map(w => w.index === winIdx ? {
-                ...w,
-                status: 'skipped_silence',
-                text: '(тишина пропущена)'
-              } : w);
+              return [...prev, { index: winIdx, text: '', status: 'processing', durationSec, rms }];
             });
-            actionLogger.info('voice', `Тест микрофона: окно #${winIdx} пропущено (${reason === 'silence' ? 'тишина' : 'короткий звук'})`);
+            sendTestWindow(wavBlob, winIdx, false);
           }
         }
       );
@@ -346,7 +318,6 @@ export const VoiceSTTTab: React.FC = () => {
       setIsRecording(false);
       setActiveStream(null);
       soundEffects.playWarningCue();
-      setTestTranscript('(Доступ к выбранному микрофону заблокирован или устройство недоступно)');
       actionLogger.error('voice', `Тест микрофона: ошибка доступа к устройству: ${err.message || err}`);
     }
   };
@@ -615,7 +586,7 @@ export const VoiceSTTTab: React.FC = () => {
 
           {/* List of Decoded Windows in Real-time */}
           {testWindows.length > 0 && (
-            <div className="space-y-1.5 text-left">
+            <div className="space-y-2 text-left">
               <div className="flex items-center justify-between text-[11px] font-medium px-1 text-[var(--c-text-muted)]">
                 <span>Сегменты речи (VAD-окна):</span>
                 <span className="text-[10px] text-[var(--c-text-dim)]">
@@ -623,41 +594,54 @@ export const VoiceSTTTab: React.FC = () => {
                 </span>
               </div>
 
-              <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+              <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
                 {testWindows.map(win => (
                   <div
                     key={win.index}
-                    className={`px-2.5 py-1.5 rounded-lg border text-xs font-mono flex items-start justify-between gap-2 transition-all ${
+                    className={`p-3 rounded-xl border text-xs transition-all ${
                       win.status === 'completed'
                         ? 'bg-[var(--c-bg-tertiary)] border-[var(--c-border)] text-[var(--c-text)]'
-                        : win.status === 'processing'
-                        ? 'bg-[var(--c-peach)]/10 border-[var(--c-peach)]/40 text-[var(--c-peach-light)] animate-pulse'
-                        : win.status === 'skipped_silence'
-                        ? 'bg-zinc-800/40 border-zinc-800 text-zinc-500'
-                        : 'bg-zinc-800/30 border-zinc-700/50 text-zinc-400'
+                        : 'bg-[var(--c-peach)]/10 border-[var(--c-peach)]/40 text-[var(--c-peach-light)]'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-bold shrink-0">
-                        #{win.index}
-                      </span>
-                      <span className="break-all">
-                        {win.text || (win.status === 'processing' ? 'whisper.cpp обрабатывает...' : 'Запись сегмента...')}
-                      </span>
+                    <div className="flex items-center justify-between gap-2 mb-1.5 font-mono text-[11px]">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-bold shrink-0">
+                          Окно #{win.index}
+                        </span>
+                        {win.durationSec && (
+                          <span className="text-zinc-500 font-mono text-[10px]">
+                            {win.durationSec.toFixed(1)}с
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="shrink-0 flex items-center gap-1.5">
+                        {win.status === 'completed' ? (
+                          <span className="flex items-center gap-1 text-emerald-400 font-medium text-[11px]">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            готово
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-[var(--c-peach)] text-[11px]">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            whisper.cpp обрабатывает...
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="shrink-0 flex items-center gap-1.5 text-[10px]">
-                      {win.durationSec && (
-                        <span className="text-zinc-500 font-mono">{win.durationSec.toFixed(1)}с</span>
-                      )}
+                    <div className="text-sm font-sans select-text leading-relaxed mt-1">
                       {win.status === 'completed' ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : win.status === 'processing' ? (
-                        <Activity className="w-3.5 h-3.5 text-[var(--c-peach)] animate-spin" />
-                      ) : win.status === 'skipped_silence' ? (
-                        <span className="text-[9px] text-zinc-500">тишина</span>
+                        win.text ? (
+                          <span className="text-zinc-100 font-medium">{win.text}</span>
+                        ) : (
+                          <span className="text-zinc-500 italic text-xs">(речь не распознана)</span>
+                        )
                       ) : (
-                        <Clock className="w-3 h-3 text-zinc-500" />
+                        <span className="text-xs text-[var(--c-peach-light)] opacity-80 italic">
+                          Whisper C++ обрабатывает...
+                        </span>
                       )}
                     </div>
                   </div>
@@ -666,18 +650,7 @@ export const VoiceSTTTab: React.FC = () => {
             </div>
           )}
 
-          {/* Full concatenated transcript */}
-          {testTranscript && (
-            <div className="p-3 rounded-xl border text-xs font-mono text-left animate-fadeIn shadow-xs" style={{ backgroundColor: 'var(--c-bg-tertiary)', borderColor: 'var(--c-border)', color: 'var(--c-text)' }}>
-              <div className="flex items-center justify-between text-[10px] text-[var(--c-text-dim)] mb-1 pb-1 border-b border-[var(--c-border)]">
-                <span className="font-semibold text-[var(--c-peach-light)]">Итоговый текст фразы:</span>
-                <span className="text-emerald-400">whisper.cpp 16kHz</span>
-              </div>
-              <p className="whitespace-pre-wrap leading-relaxed">{testTranscript}</p>
-            </div>
-          )}
-
-          {!isRecording && !isTranscribing && !testTranscript && testWindows.length === 0 && (
+          {!isRecording && !isTranscribing && testWindows.length === 0 && (
             <span className="text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
               Нажмите кнопку микрофона для тестовой стрим-записи по VAD-окнам в whisper.cpp
             </span>

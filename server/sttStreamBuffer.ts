@@ -138,15 +138,7 @@ class STTStreamBufferManager {
       const { rms, isSilent } = calculateAudioRms(audioBuffer);
 
       if (isSilent) {
-        console.log(`[STTStreamBuffer] Session ${streamId}: Window #${windowIndex} SKIPPED (silence detected, RMS: ${rms.toFixed(4)}, size: ${audioBuffer.length}B). Whisper CPU skipped.`);
-
-        this.broadcast('stt_window_skipped', {
-          streamId,
-          windowIndex,
-          reason: 'silence',
-          rms: Number(rms.toFixed(4)),
-          isFinal: session.isClosed
-        });
+        console.log(`[STTStreamBuffer] Session ${streamId}: Chunk detected as silence (RMS: ${rms.toFixed(4)}, size: ${audioBuffer.length}B), discarded immediately.`);
 
         if (session.isClosed && session.queue.length === 0 && !session.isProcessing) {
           this.finalizeSession(session);
@@ -155,7 +147,7 @@ class STTStreamBufferManager {
         return {
           windowIndex,
           text: '',
-          status: 'skipped_silence',
+          status: 'discarded_silence',
           queueLength: session.queue.length
         };
       }

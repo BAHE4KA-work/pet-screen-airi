@@ -76,7 +76,9 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [activeWindowsCount, setActiveWindowsCount] = useState(0);
   const [currentProcessingWindow, setCurrentProcessingWindow] = useState<number | null>(null);
-  const [activeWindowIndex, setActiveWindowIndex] = useState(0);
+  const [activeWindowIndex, setActiveWindowIndex] = useState(1);
+  const [sentWindowsCount, setSentWindowsCount] = useState(0);
+  const [completedWindowsCount, setCompletedWindowsCount] = useState(0);
   const [sttConfig, setSttConfig] = useState<STTConfig>({
     endpoint: 'http://localhost:8000/v1/audio/transcriptions',
     model: 'whisper-base-ru.bin',
@@ -93,7 +95,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
   const speechRecognitionRef = useRef<any>(null);
   const streamIdRef = useRef<string>('');
   const chunkIndexRef = useRef<number>(0);
-  const windowIndexRef = useRef<number>(0);
+  const windowIndexRef = useRef<number>(1);
   const streamActiveRef = useRef<boolean>(false);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const hasSpokenInWindowRef = useRef<boolean>(false);
@@ -146,6 +148,8 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       es.addEventListener('stt_window_queued', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
+          // Only handle events for current HUD stream session - prevents settings leak
+          if (!streamIdRef.current || data.streamId !== streamIdRef.current) return;
           setActiveWindowsCount(data.queueLength ?? 1);
         } catch {}
       });
@@ -153,6 +157,8 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       es.addEventListener('stt_window_processing', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
+          // Only handle events for current HUD stream session - prevents settings leak
+          if (!streamIdRef.current || data.streamId !== streamIdRef.current) return;
           setCurrentProcessingWindow(data.windowIndex);
           setIsTranscribing(true);
           setTranscribingStatus(`whisper.cpp: декодирование окна #${data.windowIndex}...`);
@@ -162,6 +168,8 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       es.addEventListener('stt_window_result', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
+          // Only handle events for current HUD stream session - prevents settings leak
+          if (!streamIdRef.current || data.streamId !== streamIdRef.current) return;
           const winText = data.text?.trim();
           if (winText) {
             receivedWindowsRef.current.set(data.windowIndex, winText);
@@ -170,6 +178,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               .map(([, t]) => t)
               .join(' ');
             setPrompt(ordered);
+            setCompletedWindowsCount(prev => prev + 1);
             soundEffects.playCompletionPing();
             inputRef.current?.focus();
             actionLogger.success('voice', `whisper.cpp [окно #${data.windowIndex}]: "${winText}"`, {
@@ -189,8 +198,8 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       es.addEventListener('stt_window_skipped', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
+          if (!streamIdRef.current || data.streamId !== streamIdRef.current) return;
           setActiveWindowsCount(prev => Math.max(0, prev - 1));
-          actionLogger.info('voice', `whisper.cpp: окно #${data.windowIndex} пропущено (тишина, RMS: ${data.rms ?? 0})`);
           if (data.isFinal) {
             setIsTranscribing(false);
             setTranscribingStatus('');
@@ -202,6 +211,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       es.addEventListener('stt_status', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
+          if (data.streamId && streamIdRef.current && data.streamId !== streamIdRef.current) return;
           if (data.status === 'transcribing') {
             setIsTranscribing(true);
             setTranscribingStatus(data.message || 'whisper.cpp распознаёт речь...');
@@ -222,6 +232,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       es.addEventListener('stt_result', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
+          if (data.streamId && streamIdRef.current && data.streamId !== streamIdRef.current) return;
           if (data.text) {
             setPrompt(data.text);
             setIsTranscribing(false);
@@ -453,6 +464,9 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
     setPrompt('');
     receivedWindowsRef.current.clear();
     setActiveWindowsCount(0);
+    setSentWindowsCount(0);
+    setCompletedWindowsCount(0);
+    setActiveWindowIndex(1);
     setCurrentProcessingWindow(null);
     setResultData(null);
     setErrorData(null);
@@ -484,6 +498,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       return;
     }
 
+    setSentWindowsCount(prev => prev + 1);
     setActiveWindowsCount(prev => prev + 1);
     setIsTranscribing(true);
 
@@ -514,8 +529,9 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
           })
         });
         const data = await res.json();
-        if (data.status === 'skipped_silence') {
+        if (data.status === 'discarded_silence' || data.status === 'skipped_silence') {
           setActiveWindowsCount(prev => Math.max(0, prev - 1));
+          setSentWindowsCount(prev => Math.max(0, prev - 1));
         } else if (data.text) {
           receivedWindowsRef.current.set(winIdx, data.text.trim());
           const ordered = Array.from(receivedWindowsRef.current.entries())
@@ -576,9 +592,11 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
 
       const streamId = `hud_vad_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       streamIdRef.current = streamId;
-      windowIndexRef.current = 0;
-      setActiveWindowIndex(0);
+      windowIndexRef.current = 1;
+      setActiveWindowIndex(1);
       setActiveWindowsCount(0);
+      setSentWindowsCount(0);
+      setCompletedWindowsCount(0);
       setCurrentProcessingWindow(null);
       receivedWindowsRef.current.clear();
 
@@ -602,15 +620,12 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
             windowIndexRef.current = winIdx;
             actionLogger.info('voice', `VAD: Речь в окне #${winIdx}...`);
           },
-          onSpeechPause: (winIdx, pauseMs) => {
+          onSpeechPause: () => {
             // Silence pause detected
           },
           onWindowReady: (wavBlob, winIdx, rms, durationSec) => {
             actionLogger.info('voice', `VAD: Окно #${winIdx} (${durationSec}с, RMS: ${rms.toFixed(3)}) отправлено в whisper.cpp...`);
             sendWindowAudio(wavBlob, winIdx, !streamActiveRef.current);
-          },
-          onWindowSkipped: (winIdx, reason) => {
-            actionLogger.info('voice', `VAD: Окно #${winIdx} пропущено (${reason === 'silence' ? 'тишина' : 'слишком короткий звук'})`);
           }
         }
       );
@@ -619,7 +634,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       vadRecorderRef.current = recorder;
 
       setIsRecording(true);
-      actionLogger.info('voice', `Голосовой ввод с VAD-окнами активен (пауза: ${vadPauseMs}мс, окно #0)...`);
+      actionLogger.info('voice', `Голосовой ввод с VAD-окнами активен (пауза: ${vadPauseMs}мс, окно #1)...`);
       soundEffects.playToolCallCue();
     } catch (err: any) {
       setIsRecording(false);
@@ -748,16 +763,14 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
                 : isRecording
                 ? '#f97316'
                 : 'var(--c-border)',
-              boxShadow: isTranscribing
-                ? '0 0 16px rgba(255, 140, 66, 0.35)'
-                : isRecording
+              boxShadow: isRecording
                 ? '0 0 16px rgba(249, 115, 22, 0.3)'
+                : isTranscribing
+                ? '0 0 16px rgba(255, 140, 66, 0.25)'
                 : 'none'
             }}
           >
-            {isTranscribing ? (
-              <Loader2 className="w-4 h-4 shrink-0 animate-spin text-[var(--c-peach)]" />
-            ) : isRecording ? (
+            {isRecording ? (
               <span className="relative flex h-3 w-3 shrink-0">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
@@ -782,11 +795,8 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
                   <span className={`w-1 rounded-full bg-red-400 transition-all duration-150 ${isSpeaking ? 'h-3 animate-pulse' : 'h-1.5 opacity-60'}`} style={{ animationDelay: '200ms' }} />
                   <span className={`w-1 rounded-full bg-red-400 transition-all duration-150 ${isSpeaking ? 'h-4.5 animate-pulse' : 'h-2 opacity-60'}`} style={{ animationDelay: '150ms' }} />
                 </div>
-                <span className="text-sm font-medium text-red-400/90 animate-pulse tracking-wide">
-                  {isSpeaking ? 'Слушаю вас... говорите' : 'Идёт голосовой ввод... говорите в микрофон'}
-                </span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/30 text-red-300">
-                  Окно #{activeWindowIndex}
+                <span className="text-sm font-medium text-red-400/90 tracking-wide">
+                  {isSpeaking ? 'Идёт голосовой ввод... (слушаю речь)' : 'Идёт голосовой ввод... говорите в микрофон'}
                 </span>
               </div>
             ) : (
@@ -800,70 +810,43 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
                   onBlur={() => setTimeout(() => setIsInputFocused(false), 200)}
                   onChange={e => setPrompt(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={
-                    activeWindowsCount > 0
-                      ? `whisper.cpp декодирует (${activeWindowsCount} в очереди)...`
-                      : isTranscribing
-                      ? `Распознавание речи whisper.cpp... (${transcribingSeconds}с)`
-                      : 'Спросите что-нибудь или вызовите инструмент...'
-                  }
+                  placeholder="Спросите что-нибудь или вызовите инструмент..."
                   className="w-full bg-transparent text-sm focus:outline-hidden placeholder:text-[var(--c-text-dim)]"
                   style={{ color: 'var(--c-text)' }}
                   disabled={loading}
                 />
-
-                {/* When recording AND prompt has text: show the inline token loader indicator for next window! */}
-                {isRecording && prompt.trim() && (
-                  <div
-                    id="hud-next-token-loader"
-                    className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-red-500/15 border border-red-500/40 text-red-300 text-xs shrink-0 select-none animate-pulse"
-                    title="Запись и декодирование следующего фрагмента речи (пауза > 300мс зафиксирует фразу)"
-                  >
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                    </span>
-                    <span className="text-[10px] font-mono font-medium">
-                      {activeWindowsCount > 0
-                        ? `+ Окно #${activeWindowIndex} (декодирование...)`
-                        : `+ Окно #${activeWindowIndex} (слушаю...)`}
-                    </span>
-                  </div>
-                )}
               </div>
             )}
 
-            {/* Active Windows Queue / Transcribing Indicator Badge */}
+            {/* 1. Single loading indicator representing the processing of window chunks */}
             {(isTranscribing || activeWindowsCount > 0) && (
               <div
-                id="hud-stt-recognizing-badge"
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--c-peach)]/20 border border-[var(--c-peach)]/50 text-[var(--c-peach)] text-xs shrink-0 animate-pulse font-medium select-none shadow-xs"
-                title="Очередь декодирования окон whisper.cpp"
+                id="hud-chunk-processing-loader"
+                className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[var(--c-peach)]/15 border border-[var(--c-peach)]/40 text-[var(--c-peach)] text-xs shrink-0 select-none"
+                title="Обработка чанков окон whisper.cpp"
               >
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--c-peach)]" />
-                <span className="font-semibold">
-                  {currentProcessingWindow !== null ? `Окно #${currentProcessingWindow}` : 'Очередь'}
-                </span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-sm bg-[var(--c-peach)]/30 text-[var(--c-peach-light)]">
-                  {activeWindowsCount > 0 ? `${activeWindowsCount} в очереди` : `${transcribingSeconds}с`}
-                </span>
+                <span className="text-[11px] font-medium">Обработка</span>
               </div>
             )}
 
-            {/* Recording Active Badge with VAD state */}
-            {isRecording && (
+            {/* 2. Status indicator: current window | completed windows decoding% (clean, no loader) */}
+            {(isRecording || sentWindowsCount > 0 || isTranscribing) && (
               <div
-                id="hud-stt-recording-badge"
-                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-[11px] shrink-0 font-medium select-none transition-colors ${
-                  isSpeaking
-                    ? 'bg-red-500/20 border-red-500/50 text-red-400 animate-pulse'
-                    : 'bg-zinc-800/80 border-zinc-700 text-zinc-400'
-                }`}
-                title={`Окно #${activeWindowIndex} (VAD: пауза >300мс отправляет фразу)`}
+                id="hud-stt-status-indicator"
+                className="flex items-center px-2.5 py-1 rounded-lg bg-zinc-800/90 border border-zinc-700/60 font-mono text-xs text-zinc-200 shrink-0 select-none"
+                title={`Окно #${activeWindowIndex} | Обработано: ${completedWindowsCount} | Декодирование: ${sentWindowsCount > 0 ? Math.min(100, Math.round((completedWindowsCount / sentWindowsCount) * 100)) : (completedWindowsCount > 0 ? 100 : 0)}%`}
               >
-                <span className={`w-1.5 h-1.5 rounded-full ${isSpeaking ? 'bg-red-500 animate-ping' : 'bg-zinc-500'}`} />
-                <span>{isSpeaking ? 'Говорю' : 'Пауза'}</span>
-                <span className="text-[9px] font-mono opacity-80">#{activeWindowIndex}</span>
+                <span className="font-semibold text-zinc-100">{activeWindowIndex}</span>
+                <span className="text-zinc-500 mx-1.5">|</span>
+                <span className="text-zinc-300">{completedWindowsCount}</span>
+                <span className="text-zinc-400 ml-2">
+                  {sentWindowsCount > 0
+                    ? Math.min(100, Math.round((completedWindowsCount / sentWindowsCount) * 100))
+                    : completedWindowsCount > 0
+                    ? 100
+                    : 0}%
+                </span>
               </div>
             )}
 
@@ -882,7 +865,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               <AudioVolumeVisualizer
                 stream={activeAudioStream}
                 isActive={isRecording}
-                barCount={5}
+                barCount={4}
                 showLevelText={false}
               />
             )}
@@ -893,25 +876,15 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
                 type="button"
                 id="hud-voice-btn"
                 onClick={handleToggleVoice}
-                title={
-                  isRecording
-                    ? 'Остановить запись микрофона'
-                    : activeWindowsCount > 0
-                    ? 'whisper.cpp декодирует речь...'
-                    : 'Голосовой ввод'
-                }
+                title={isRecording ? 'Остановить запись микрофона' : 'Голосовой ввод'}
                 className={`p-1.5 rounded-lg text-xs transition-all flex items-center gap-1 ${
                   isRecording
                     ? 'bg-orange-500 text-white animate-pulse'
-                    : isTranscribing || activeWindowsCount > 0
-                    ? 'bg-[var(--c-peach)]/20 text-[var(--c-peach)] cursor-wait'
                     : 'text-[var(--c-text-muted)] hover:text-[var(--c-peach)] hover:bg-white/5'
                 }`}
               >
                 {isRecording ? (
                   <MicOff className="w-3.5 h-3.5" />
-                ) : isTranscribing || activeWindowsCount > 0 ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--c-peach)]" />
                 ) : (
                   <Mic className="w-3.5 h-3.5" />
                 )}
@@ -926,13 +899,6 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
                 >
                   <ChevronDown className="w-2.5 h-2.5" />
                 </button>
-              )}
-
-              {/* Bottom scan line animation during transcription */}
-              {isTranscribing && (
-                <div className="absolute -bottom-2.5 -left-96 -right-96 h-0.5 bg-[var(--c-peach)]/30 overflow-hidden pointer-events-none">
-                  <div className="h-full bg-[var(--c-peach)] animate-pulse w-full" />
-                </div>
               )}
 
               {/* Mic Device Selector Dropdown */}

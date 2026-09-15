@@ -82,7 +82,7 @@ export class VadAudioRecorder {
   private config: Required<VadRecorderConfig>;
   private callbacks: VadRecorderCallbacks;
 
-  private currentWindowIndex = 0;
+  private currentWindowIndex = 1;
   private pcmChunks: Float32Array[] = [];
   private hasSpokenInWindow = false;
   private speechStartTime = 0;
@@ -109,7 +109,7 @@ export class VadAudioRecorder {
 
     this.stream = stream;
     this.isRunning = true;
-    this.currentWindowIndex = 0;
+    this.currentWindowIndex = 1;
     this.pcmChunks = [];
     this.hasSpokenInWindow = false;
     this.speechStartTime = 0;
@@ -169,8 +169,7 @@ export class VadAudioRecorder {
             if (speechDuration >= this.config.vadMinSpeechMs) {
               this.flushCurrentWindow();
             } else {
-              // Too short (noise/click) -> skip to save Whisper CPU
-              this.callbacks.onWindowSkipped?.(this.currentWindowIndex, 'speech_too_short');
+              // Too short (noise/click) -> discard completely, do not count as window
               this.pcmChunks = [];
               this.hasSpokenInWindow = false;
               this.speechStartTime = 0;
@@ -206,18 +205,22 @@ export class VadAudioRecorder {
     }
     const windowRms = Math.sqrt(sum / combined.length);
 
+    // Strict Silence Filtering: if overall window RMS is below threshold, discard without creating a window
+    if (windowRms < this.config.vadThreshold * 0.7) {
+      this.pcmChunks = [];
+      this.hasSpokenInWindow = false;
+      this.speechStartTime = 0;
+      this.lastSpeechTime = 0;
+      return;
+    }
+
+    // Speech is valid: assign window index and increment
     const winIdx = this.currentWindowIndex;
     this.currentWindowIndex += 1;
     this.pcmChunks = [];
     this.hasSpokenInWindow = false;
     this.speechStartTime = 0;
     this.lastSpeechTime = 0;
-
-    // Strict Silence Filtering: if overall window RMS is below threshold, skip!
-    if (windowRms < this.config.vadThreshold * 0.7) {
-      this.callbacks.onWindowSkipped?.(winIdx, 'silence');
-      return;
-    }
 
     const durationSec = Math.round((combined.length / this.config.targetSampleRate) * 100) / 100;
     const wavBlob = encodeWav(combined, this.config.targetSampleRate);
@@ -241,10 +244,23 @@ export class VadAudioRecorder {
         combined.set(c, offset);
         offset += c.length;
       }
-      finalWindowIndex = this.currentWindowIndex;
-      finalBlob = encodeWav(combined, this.config.targetSampleRate);
-      const durationSec = Math.round((combined.length / this.config.targetSampleRate) * 100) / 100;
-      this.callbacks.onWindowReady?.(finalBlob, finalWindowIndex, 0.05, durationSec);
+
+      let sum = 0;
+      for (let i = 0; i < combined.length; i++) {
+        sum += combined[i] * combined[i];
+      }
+      const windowRms = Math.sqrt(sum / combined.length);
+      const speechDuration = (this.lastSpeechTime || Date.now()) - this.speechStartTime;
+
+      if (windowRms >= this.config.vadThreshold * 0.7 && speechDuration >= this.config.vadMinSpeechMs) {
+        finalWindowIndex = this.currentWindowIndex;
+        this.currentWindowIndex += 1;
+        finalBlob = encodeWav(combined, this.config.targetSampleRate);
+        const durationSec = Math.round((combined.length / this.config.targetSampleRate) * 100) / 100;
+        this.callbacks.onWindowReady?.(finalBlob, finalWindowIndex, windowRms, durationSec);
+      }
+      this.pcmChunks = [];
+      this.hasSpokenInWindow = false;
     }
 
     if (this.processorNode) {
