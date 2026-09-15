@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Eye, EyeOff, Sparkles, Clock, Activity, Maximize2, Minimize2, Monitor } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Settings, Eye, EyeOff, Sparkles, Clock, Activity, Maximize2, Minimize2, Monitor, PanelBottom, GripVertical } from 'lucide-react';
 import { FloatingHud } from './components/FloatingHud';
 import { SettingsModal } from './components/SettingsModal';
 import { DesktopBackground } from './components/DesktopBackground';
@@ -64,6 +64,127 @@ export default function App() {
     const saved = localStorage.getItem('overlay_taskbar_visible');
     return saved !== null ? saved === 'true' : true;
   });
+
+  // Draggable and Corner-Sticky Dock Controls
+  type CornerPosition = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
+  const [dockCorner, setDockCorner] = useState<CornerPosition>(() => {
+    const saved = localStorage.getItem('overlay_dock_corner') as CornerPosition | null;
+    return saved || 'top-right';
+  });
+  const [dockCustomPos, setDockCustomPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDraggingDock, setIsDraggingDock] = useState(false);
+  const [snapCandidate, setSnapCandidate] = useState<CornerPosition | null>(null);
+  const dockRef = useRef<HTMLElement | null>(null);
+  const dragStartRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number }>({
+    mouseX: 0,
+    mouseY: 0,
+    startX: 0,
+    startY: 0
+  });
+
+  const getCornerCoordinates = useCallback((corner: CornerPosition, dockWidth: number, dockHeight: number) => {
+    const pad = 16;
+    const bottomPad = isTaskbarVisible ? 60 : 16;
+    switch (corner) {
+      case 'top-left':
+        return { x: pad, y: pad };
+      case 'top-right':
+        return { x: window.innerWidth - dockWidth - pad, y: pad };
+      case 'bottom-left':
+        return { x: pad, y: window.innerHeight - dockHeight - bottomPad };
+      case 'bottom-right':
+        return { x: window.innerWidth - dockWidth - pad, y: window.innerHeight - dockHeight - bottomPad };
+    }
+  }, [isTaskbarVisible]);
+
+  const handleDockDragStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dockRef.current) return;
+    const rect = dockRef.current.getBoundingClientRect();
+    dragStartRef.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      startX: rect.left,
+      startY: rect.top
+    };
+    setDockCustomPos({ x: rect.left, y: rect.top });
+    setIsDraggingDock(true);
+  };
+
+  useEffect(() => {
+    if (!isDraggingDock) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dockRef.current) return;
+      const dockRect = dockRef.current.getBoundingClientRect();
+      const dockW = dockRect.width;
+      const dockH = dockRect.height;
+
+      const deltaX = e.clientX - dragStartRef.current.mouseX;
+      const deltaY = e.clientY - dragStartRef.current.mouseY;
+      const rawX = dragStartRef.current.startX + deltaX;
+      const rawY = dragStartRef.current.startY + deltaY;
+
+      // Viewport clamping
+      const maxX = window.innerWidth - dockW - 8;
+      const maxY = window.innerHeight - dockH - (isTaskbarVisible ? 56 : 8);
+      const clampedX = Math.max(8, Math.min(rawX, maxX));
+      const clampedY = Math.max(8, Math.min(rawY, maxY));
+
+      setDockCustomPos({ x: clampedX, y: clampedY });
+
+      // Find closest corner for sticky snap
+      const corners: CornerPosition[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+      let closestCorner: CornerPosition = 'top-right';
+      let minDistance = Infinity;
+
+      corners.forEach(corner => {
+        const target = getCornerCoordinates(corner, dockW, dockH);
+        const dist = Math.hypot(clampedX - target.x, clampedY - target.y);
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestCorner = corner;
+        }
+      });
+
+      // Stickiness / magnetic threshold: 160px or quadrant
+      if (minDistance < 200) {
+        setSnapCandidate(closestCorner);
+      } else {
+        const isTop = clampedY < window.innerHeight / 2;
+        const isLeft = clampedX < window.innerWidth / 2;
+        const quadCorner: CornerPosition = isTop
+          ? isLeft
+            ? 'top-left'
+            : 'top-right'
+          : isLeft
+          ? 'bottom-left'
+          : 'bottom-right';
+        setSnapCandidate(quadCorner);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingDock(false);
+      if (snapCandidate) {
+        setDockCorner(snapCandidate);
+        localStorage.setItem('overlay_dock_corner', snapCandidate);
+        soundEffects.playCompletionPing();
+        actionLogger.info('ui', `Панель управления прикреплена к углу: ${snapCandidate}`);
+      }
+      setDockCustomPos(null);
+      setSnapCandidate(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingDock, snapCandidate, isTaskbarVisible, getCornerCoordinates]);
 
   // Set transparency class on document for overlay mode
   useEffect(() => {
@@ -554,19 +675,81 @@ export default function App() {
         ))}
       </div>
 
-      {/* Discrete Corner Control Bar (Minimal dock) - only visible when HUD is active */}
+      {/* Ghost snap indicator when dragging dock to screen corners */}
+      {isDraggingDock && snapCandidate && (
+        <div
+          className={`fixed z-30 pointer-events-none rounded-xl border-2 border-dashed border-[var(--c-peach)]/70 bg-[var(--c-peach-surface)]/30 backdrop-blur-xs transition-all duration-200 ${
+            snapCandidate === 'top-left'
+              ? 'top-4 left-4'
+              : snapCandidate === 'top-right'
+              ? 'top-4 right-4'
+              : snapCandidate === 'bottom-left'
+              ? `left-4 ${isTaskbarVisible ? 'bottom-16' : 'bottom-4'}`
+              : `right-4 ${isTaskbarVisible ? 'bottom-16' : 'bottom-4'}`
+          }`}
+          style={{
+            width: dockRef.current?.offsetWidth || 230,
+            height: dockRef.current?.offsetHeight || 44
+          }}
+        />
+      )}
+
+      {/* Discrete Draggable & Corner-Sticky Control Bar (Minimal dock) */}
       {hudVisible && (
         <aside
+          ref={dockRef}
           id="corner-dock-controls"
           data-interactive="true"
           onClick={e => e.stopPropagation()}
           onMouseEnter={() => electronBridge.setInteractive(true)}
-          className="interactive-ui fixed top-4 right-4 z-40 flex items-center gap-1.5 p-1.5 rounded-xl border shadow-lg backdrop-blur-xl transition-all"
+          className={`interactive-ui fixed z-40 flex items-center gap-1.5 p-1.5 rounded-xl border shadow-xl backdrop-blur-xl select-none ${
+            dockCustomPos
+              ? ''
+              : `transition-all duration-300 ${
+                  dockCorner === 'top-left'
+                    ? 'top-4 left-4'
+                    : dockCorner === 'top-right'
+                    ? 'top-4 right-4'
+                    : dockCorner === 'bottom-left'
+                    ? `left-4 ${isTaskbarVisible ? 'bottom-16' : 'bottom-4'}`
+                    : `right-4 ${isTaskbarVisible ? 'bottom-16' : 'bottom-4'}`
+                }`
+          }`}
           style={{
-            backgroundColor: 'rgba(18, 21, 29, 0.8)',
-            borderColor: 'var(--c-border)'
+            backgroundColor: 'rgba(18, 21, 29, 0.88)',
+            borderColor: isDraggingDock ? 'var(--c-peach)' : 'var(--c-border)',
+            ...(dockCustomPos ? { left: `${dockCustomPos.x}px`, top: `${dockCustomPos.y}px` } : {})
           }}
         >
+          {/* Drag Handle to stick dock to any screen corner */}
+          <div
+            onMouseDown={handleDockDragStart}
+            className="px-1 py-2 rounded-md text-[var(--c-text-dim)] hover:text-[var(--c-peach)] cursor-grab active:cursor-grabbing hover:bg-white/5 transition-colors flex items-center justify-center"
+            title="Перетащите для перемещения панели или прилипания к углам экрана"
+          >
+            <GripVertical className="w-3.5 h-3.5" />
+          </div>
+
+          {/* Taskbar Toggle Button (Moved from broken bottom plate to dock icon) */}
+          <button
+            id="dock-taskbar-toggle-btn"
+            onClick={() => {
+              const next = !isTaskbarVisible;
+              setIsTaskbarVisible(next);
+              localStorage.setItem('overlay_taskbar_visible', String(next));
+              soundEffects.playToolCallCue();
+              actionLogger.info('ui', next ? 'Панель задач отображена' : 'Панель задач скрыта');
+            }}
+            className={`p-2 rounded-lg transition-colors ${
+              isTaskbarVisible
+                ? 'text-[var(--c-peach)] bg-[var(--c-peach-surface)]'
+                : 'text-[var(--c-text-muted)] hover:text-[var(--c-peach)]'
+            }`}
+            title={isTaskbarVisible ? 'Скрыть панель задач' : 'Показать панель задач'}
+          >
+            <PanelBottom className="w-4 h-4" />
+          </button>
+
           {/* Window Mode Toggle (Borderless Desktop vs Exclusive Fullscreen) */}
           <button
             id="dock-fullscreen-btn"

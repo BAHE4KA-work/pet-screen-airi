@@ -651,16 +651,25 @@ app.post('/api/models/local/descriptor', (req, res) => {
   res.json({ success: true, ...result, overview: localModelsManager.scanModels() });
 });
 
-// API: Model Runtime RAM Management (Load / Unload / Status)
+// API: Model Runtime RAM Management (Load / Unload / Status) - Multi-container parallel memory
 app.get('/api/models/runtime', (req, res) => {
-  res.json(localModelRuntime.getState());
+  const category = (req.query.category as string) || undefined;
+  res.json({
+    ...localModelRuntime.getState(category),
+    allRuntimes: localModelRuntime.getAllStates()
+  });
 });
 
 app.post('/api/models/load', async (req, res) => {
   try {
     const { category = 'basemodel', filename } = req.body;
     const runtime = await localModelRuntime.loadModel(category, filename);
-    res.json({ success: true, runtime, modelStatus: modulesRegistry.getModelStatus() });
+    res.json({
+      success: true,
+      runtime,
+      allRuntimes: localModelRuntime.getAllStates(),
+      modelStatus: modulesRegistry.getModelStatus()
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(400).json({ success: false, error: msg });
@@ -668,8 +677,14 @@ app.post('/api/models/load', async (req, res) => {
 });
 
 app.post('/api/models/unload', (req, res) => {
-  const runtime = localModelRuntime.unloadModel();
-  res.json({ success: true, runtime, modelStatus: modulesRegistry.getModelStatus() });
+  const { category = 'basemodel' } = req.body;
+  const runtime = localModelRuntime.unloadModel(category);
+  res.json({
+    success: true,
+    runtime,
+    allRuntimes: localModelRuntime.getAllStates(),
+    modelStatus: modulesRegistry.getModelStatus()
+  });
 });
 
 // API: Toggle Module (all tools in module)

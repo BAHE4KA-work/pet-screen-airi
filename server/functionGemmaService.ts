@@ -204,7 +204,7 @@ ${toolsSchema}`;
     const overview = localModelsManager.scanModels();
     const baseModelFiles = overview.categories['basemodel']?.files || [];
     
-    let loadedRuntime = localModelRuntime.getState();
+    let loadedRuntime = localModelRuntime.getState('basemodel');
     if (!loadedRuntime.isLoaded && baseModelFiles.length > 0) {
       try {
         const activeName = localModelsManager.getActiveModel('basemodel') || baseModelFiles[0].filename;

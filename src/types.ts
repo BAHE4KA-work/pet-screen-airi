@@ -281,6 +281,14 @@ export interface LocalModelsOverview {
   activeSelections: Record<string, string>;
 }
 
+export interface LoadedCategoryInfo {
+  category: string;
+  loadedModel: string;
+  sizeFormatted: string;
+  containerName: string;
+  loadedAt: string;
+}
+
 export interface ModelRuntimeState {
   isLoaded: boolean;
   loaded: boolean;
@@ -303,5 +311,9 @@ export interface ModelRuntimeState {
   lastUsedAt: string | null;
   statusMessage: string;
   source: 'RAM_LOCAL_FILE' | 'ENDPOINT' | 'UNLOADED';
+  containerName?: string;
+  loadedCategories?: Record<string, LoadedCategoryInfo>;
+  totalLoadedCount?: number;
+  totalRamFormatted?: string;
 }
 

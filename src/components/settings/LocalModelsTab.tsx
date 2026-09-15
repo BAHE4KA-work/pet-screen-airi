@@ -20,7 +20,7 @@ import {
   Database,
   Radio
 } from 'lucide-react';
-import { LocalModelsOverview, LocalModelCategoryInfo, ModelRuntimeState } from '../../types';
+import { LocalModelsOverview, LocalModelCategoryInfo, ModelRuntimeState, LoadedCategoryInfo } from '../../types';
 import { soundEffects } from '../../utils/audioEffects';
 import { useServerEvents } from '../../hooks/useServerEvents';
 import { Button } from '../ui/Button';
@@ -31,6 +31,7 @@ import { Input } from '../ui/Input';
 export const LocalModelsTab: React.FC = () => {
   const [overview, setOverview] = useState<LocalModelsOverview | null>(null);
   const [runtime, setRuntime] = useState<ModelRuntimeState | null>(null);
+  const [allRuntimes, setAllRuntimes] = useState<Record<string, ModelRuntimeState>>({});
   const [loading, setLoading] = useState(false);
   const [loadingRam, setLoadingRam] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
@@ -58,6 +59,9 @@ export const LocalModelsTab: React.FC = () => {
       if (resRuntime.ok) {
         const rt = await resRuntime.json();
         setRuntime(rt);
+        if (rt.allRuntimes) {
+          setAllRuntimes(rt.allRuntimes);
+        }
       }
     } catch (e) {
       console.error('Failed to load local models overview:', e);
@@ -84,6 +88,9 @@ export const LocalModelsTab: React.FC = () => {
       if (resRuntime.ok) {
         const rt = await resRuntime.json();
         setRuntime(rt);
+        if (rt.allRuntimes) {
+          setAllRuntimes(rt.allRuntimes);
+        }
       }
     } catch (e) {
       console.error(e);
@@ -125,8 +132,13 @@ export const LocalModelsTab: React.FC = () => {
         body: JSON.stringify({ category: cat, filename: targetFilename })
       });
       const data = await res.json();
-      if (data.success && data.runtime) {
-        setRuntime(data.runtime);
+      if (data.success) {
+        if (data.runtime) {
+          setRuntime(data.runtime);
+        }
+        if (data.allRuntimes) {
+          setAllRuntimes(data.allRuntimes);
+        }
         soundEffects.playCompletionPing();
       } else {
         const msg = data.error || 'Ошибка выделения оперативной памяти под модель';
@@ -142,14 +154,24 @@ export const LocalModelsTab: React.FC = () => {
     }
   };
 
-  const handleUnloadFromRam = async () => {
+  const handleUnloadFromRam = async (category?: string) => {
     setLoadingRam(true);
     setRuntimeError(null);
     try {
-      const res = await fetch('/api/models/unload', { method: 'POST' });
+      const cat = category || activeCategory;
+      const res = await fetch('/api/models/unload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: cat })
+      });
       const data = await res.json();
-      if (data.success && data.runtime) {
-        setRuntime(data.runtime);
+      if (data.success) {
+        if (data.runtime) {
+          setRuntime(data.runtime);
+        }
+        if (data.allRuntimes) {
+          setAllRuntimes(data.allRuntimes);
+        }
         soundEffects.playCompletionPing();
       }
     } catch (e) {
@@ -207,7 +229,10 @@ export const LocalModelsTab: React.FC = () => {
   const currentCategoryInfo: LocalModelCategoryInfo | undefined =
     overview?.categories[activeCategory];
 
-  const isModelLoaded = Boolean(runtime?.isLoaded || runtime?.loaded);
+  const currentCategoryRuntime = allRuntimes[activeCategory] || (runtime?.activeCategory === activeCategory ? runtime : null);
+  const isCategoryLoaded = Boolean(currentCategoryRuntime?.isLoaded || currentCategoryRuntime?.loaded);
+  const loadedCategoriesEntries = Object.entries(runtime?.loadedCategories || {}) as [string, LoadedCategoryInfo][];
+  const totalLoadedCount = loadedCategoriesEntries.length;
 
   return (
     <div className="space-y-4">
@@ -223,7 +248,7 @@ export const LocalModelsTab: React.FC = () => {
           <div className="flex items-center gap-2">
             <Server className="w-4 h-4 text-[var(--c-peach)]" />
             <span className="font-semibold text-[var(--c-text)]">
-              Микросервисы бэкенда (Python + FastAPI + RabbitMQ)
+              Параллельные контейнеры микросервисов (LLM Worker + Voice Worker)
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -247,7 +272,7 @@ export const LocalModelsTab: React.FC = () => {
             <div className="text-[10px] text-[var(--c-text-dim)] uppercase tracking-wider font-semibold">LLM Worker</div>
             <div className="flex items-center gap-1.5 font-medium text-[11px] text-[var(--c-peach-light)]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--c-peach)]"></span>
-              llama.cpp CPU (GGUF)
+              overlay-llm-worker
             </div>
           </div>
 
@@ -255,7 +280,7 @@ export const LocalModelsTab: React.FC = () => {
             <div className="text-[10px] text-[var(--c-text-dim)] uppercase tracking-wider font-semibold">Voice Worker</div>
             <div className="flex items-center gap-1.5 font-medium text-[11px] text-sky-400">
               <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
-              whisper.cpp (Q8_0)
+              overlay-stt-worker
             </div>
           </div>
 
@@ -277,66 +302,88 @@ export const LocalModelsTab: React.FC = () => {
         </div>
       </div>
 
-      {/* RAM Runtime State Banner */}
+      {/* RAM Runtime State Banner - Per-category container allocation & Parallel state */}
       <div
-        className="p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all"
+        className="p-3.5 rounded-xl border flex flex-col gap-3 transition-all"
         style={{
-          backgroundColor: isModelLoaded ? 'var(--c-peach-surface)' : 'var(--c-bg-secondary)',
-          borderColor: isModelLoaded ? 'var(--c-peach-border)' : 'var(--c-border)'
+          backgroundColor: isCategoryLoaded ? 'var(--c-peach-surface)' : 'var(--c-bg-secondary)',
+          borderColor: isCategoryLoaded ? 'var(--c-peach-border)' : 'var(--c-border)'
         }}
       >
-        <div className="flex items-center gap-3">
-          <div
-            className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border transition-all"
-            style={{
-              backgroundColor: isModelLoaded ? 'var(--c-bg-primary)' : 'var(--c-bg-tertiary)',
-              borderColor: isModelLoaded ? 'var(--c-peach-border)' : 'var(--c-border)',
-              color: isModelLoaded ? 'var(--c-peach-light)' : 'var(--c-text-muted)'
-            }}
-          >
-            <Cpu className="w-5 h-5" />
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border transition-all"
+              style={{
+                backgroundColor: isCategoryLoaded ? 'var(--c-bg-primary)' : 'var(--c-bg-tertiary)',
+                borderColor: isCategoryLoaded ? 'var(--c-peach-border)' : 'var(--c-border)',
+                color: isCategoryLoaded ? 'var(--c-peach-light)' : 'var(--c-text-muted)'
+              }}
+            >
+              <Cpu className="w-5 h-5" />
+            </div>
+
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold" style={{ color: 'var(--c-text)' }}>
+                  {isCategoryLoaded
+                    ? `Модель [${currentCategoryInfo?.name || activeCategory}] в ОЗУ`
+                    : `Модель [${currentCategoryInfo?.name || activeCategory}] не загружена в ОЗУ`}
+                </span>
+                <Badge variant={isCategoryLoaded ? 'peach' : 'neutral'} size="sm">
+                  {isCategoryLoaded ? `${currentCategoryRuntime?.ramUsageFormatted || currentCategoryRuntime?.sizeFormatted} (Контейнер: ${currentCategoryRuntime?.containerName})` : '0 MB'}
+                </Badge>
+              </div>
+              <div className="text-[11px] font-mono text-[var(--c-text-muted)]">
+                {isCategoryLoaded
+                  ? `${currentCategoryRuntime?.loadedModel || currentCategoryRuntime?.activeFilename}`
+                  : 'Загружается независимо в собственный контейнер без конкуренции за ОЗУ'}
+              </div>
+            </div>
           </div>
 
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold" style={{ color: 'var(--c-text)' }}>
-                {isModelLoaded ? 'Модель загружена в ОЗУ' : 'Модель не загружена в ОЗУ'}
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            {isCategoryLoaded ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handleUnloadFromRam(activeCategory)}
+                disabled={loadingRam}
+                icon={<PowerOff className="w-3.5 h-3.5 text-rose-400" />}
+              >
+                {loadingRam ? 'Выгрузка...' : 'Выгрузить из ОЗУ'}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => handleLoadToRam(activeCategory)}
+                disabled={loadingRam || !overview?.categories[activeCategory]?.activeModel}
+                icon={<Zap className={`w-3.5 h-3.5 ${loadingRam ? 'animate-spin' : ''}`} />}
+              >
+                {loadingRam ? 'Загрузка весов в ОЗУ...' : 'Загрузить в ОЗУ'}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Multi-container parallel loaded overview */}
+        {totalLoadedCount > 0 && (
+          <div className="pt-2 border-t border-[var(--c-border)]/60 flex items-center gap-2 flex-wrap text-[11px]">
+            <span className="text-[var(--c-text-dim)] font-medium">Активно в параллельных контейнерах:</span>
+            {loadedCategoriesEntries.map(([cat, info]) => (
+              <span
+                key={cat}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--c-bg-primary)] border border-[var(--c-border)] font-mono text-[10px]"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <strong className="text-[var(--c-text)]">{info.containerName}</strong>:
+                <span className="text-[var(--c-peach)] truncate max-w-[140px]">{info.loadedModel}</span>
+                <span className="text-[var(--c-text-dim)]">({info.sizeFormatted})</span>
               </span>
-              <Badge variant={isModelLoaded ? 'peach' : 'neutral'} size="sm">
-                {isModelLoaded ? `${runtime?.ramUsageFormatted || runtime?.sizeFormatted} (RSS: ${runtime?.rssMb || 0} MB)` : '0 MB'}
-              </Badge>
-            </div>
-            <div className="text-[11px] font-mono text-[var(--c-text-muted)]">
-              {isModelLoaded
-                ? `${runtime?.loadedModel || runtime?.activeFilename} (${runtime?.loadedCategory || runtime?.activeCategory})`
-                : 'Загружается в память автоматически при первом запросе или вручную'}
-            </div>
+            ))}
           </div>
-        </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          {isModelLoaded ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleUnloadFromRam}
-              disabled={loadingRam}
-              icon={<PowerOff className="w-3.5 h-3.5 text-rose-400" />}
-            >
-              {loadingRam ? 'Выгрузка...' : 'Выгрузить из ОЗУ'}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={() => handleLoadToRam()}
-              disabled={loadingRam || !overview?.categories[activeCategory]?.activeModel}
-              icon={<Zap className={`w-3.5 h-3.5 ${loadingRam ? 'animate-spin' : ''}`} />}
-            >
-              {loadingRam ? 'Загрузка весов в ОЗУ...' : 'Загрузить в ОЗУ'}
-            </Button>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Runtime Error Notification */}
@@ -432,7 +479,11 @@ export const LocalModelsTab: React.FC = () => {
           ) : (
             currentCategoryInfo.files.map(file => {
               const isActive = file.isActive;
-              const isLoadedInRam = isModelLoaded && (runtime?.loadedModel === file.filename || runtime?.activeFilename === file.filename);
+              const categoryRuntime = allRuntimes[currentCategoryInfo.key];
+              const isLoadedInRam = Boolean(
+                (categoryRuntime?.isLoaded && categoryRuntime?.loadedModel === file.filename) ||
+                (runtime?.loadedCategories?.[currentCategoryInfo.key]?.loadedModel === file.filename)
+              );
 
               return (
                 <div
@@ -477,7 +528,7 @@ export const LocalModelsTab: React.FC = () => {
                         )}
                         {isLoadedInRam && (
                           <Badge variant="peach" size="sm" className="animate-pulse">
-                            В ОЗУ
+                            В ОЗУ ({categoryRuntime?.containerName || runtime?.loadedCategories?.[currentCategoryInfo.key]?.containerName || 'Контейнер'})
                           </Badge>
                         )}
                       </div>
@@ -496,7 +547,7 @@ export const LocalModelsTab: React.FC = () => {
                         onClick={(e) => {
                           e.stopPropagation();
                           if (isLoadedInRam) {
-                            handleUnloadFromRam();
+                            handleUnloadFromRam(currentCategoryInfo.key);
                           } else {
                             handleLoadToRam(currentCategoryInfo.key, file.filename);
                           }
