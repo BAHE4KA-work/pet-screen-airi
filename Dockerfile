@@ -6,11 +6,11 @@ WORKDIR /app
 # 1. Принудительный IPv4 DNS (устраняет зависание на IPv6 в Docker Desktop / WSL2)
 ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 
-# 2. Ограничиваем таймауты сетевых запросов
-ENV NPM_CONFIG_FETCH_TIMEOUT=25000 \
-    NPM_CONFIG_FETCH_RETRIES=2 \
-    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=2000 \
-    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=10000 \
+# 2. Сетевые таймауты и повторные попытки (защита от разрывов TLS и медленных соединений)
+ENV NPM_CONFIG_FETCH_TIMEOUT=60000 \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=5000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=60000 \
     NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false
 
@@ -25,26 +25,31 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     NO_PROXY=${NO_PROXY}
 
 # Копируем манифесты зависимостей и конфигурацию сборщика
-COPY package.json tsconfig.json vite.config.ts ./
+COPY package.json package-lock.json* tsconfig.json vite.config.ts ./
 
-# 4. Проверка доступности реестра + установка зависимостей.
-# ВАЖНО: Не используем --omit=optional, так как Rollup и esbuild
-# хранят платформозависимые бинарники (linux-x64) в optionalDependencies!
+# 4. Надежная установка зависимостей с автоматическим переключением зеркал
 RUN set -e; \
-    CHOSEN_REGISTRY="${NPM_REGISTRY}"; \
-    echo "Testing npm registry connectivity: ${CHOSEN_REGISTRY}..."; \
-    if ! node -e "fetch('${CHOSEN_REGISTRY}', { signal: AbortSignal.timeout(3500) }).then(r => process.exit(r.ok || r.status < 500 ? 0 : 1)).catch(() => process.exit(1))"; then \
-        echo "--> WARNING: ${CHOSEN_REGISTRY} is unreachable. Switching to mirror https://registry.npmmirror.com/"; \
-        CHOSEN_REGISTRY="https://registry.npmmirror.com/"; \
-    else \
-        echo "--> Connected to ${CHOSEN_REGISTRY} successfully."; \
+    install_with_registry() { \
+      REG="$1"; \
+      echo "--> Trying to install dependencies using registry: $REG"; \
+      npm config set registry "$REG"; \
+      if npm install --no-audit --no-fund --fetch-timeout=60000 --fetch-retries=4; then \
+        return 0; \
+      else \
+        echo "--> Installation failed on $REG"; \
+        return 1; \
+      fi; \
+    }; \
+    if ! install_with_registry "${NPM_REGISTRY}"; then \
+      echo "--> Primary registry failed. Trying fallback: https://registry.yarnpkg.com/"; \
+      if ! install_with_registry "https://registry.yarnpkg.com/"; then \
+        echo "--> Fallback registry failed. Trying: https://registry.npmmirror.com/"; \
+        install_with_registry "https://registry.npmmirror.com/"; \
+      fi; \
     fi; \
-    npm config set registry "${CHOSEN_REGISTRY}"; \
-    echo "Installing packages from ${CHOSEN_REGISTRY}..."; \
-    npm install --no-audit --no-fund; \
     if [ ! -d "node_modules/@rollup/rollup-linux-x64-gnu" ]; then \
-        echo "Ensuring native @rollup/rollup-linux-x64-gnu module is present..."; \
-        npm install --no-save --no-audit --no-fund @rollup/rollup-linux-x64-gnu; \
+      echo "Ensuring native @rollup/rollup-linux-x64-gnu module is present..."; \
+      npm install --no-save --no-audit --no-fund @rollup/rollup-linux-x64-gnu || true; \
     fi
 
 # 5. Копируем исходный код и собираем продакшн-билд
