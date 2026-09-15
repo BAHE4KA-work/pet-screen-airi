@@ -35,8 +35,10 @@ export const VoiceSTTTab: React.FC = () => {
   const [audioDevices, setAudioDevices] = useState<AudioDeviceOption[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => audioDevicesManager.getStoredDeviceId());
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
+  const activeStreamRef = useRef<MediaStream | null>(null);
   const [saved, setSaved] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const isRecordingRef = useRef<boolean>(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [streamChunksSent, setStreamChunksSent] = useState<number>(0);
   const [streamStatusText, setStreamStatusText] = useState<string>('');
@@ -49,6 +51,15 @@ export const VoiceSTTTab: React.FC = () => {
   const vadRecorderRef = useRef<VadAudioRecorder | null>(null);
   const streamIdRef = useRef<string>('');
   const receivedWindowsRef = useRef<Map<number, string>>(new Map());
+
+  // Synchronize refs
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  useEffect(() => {
+    activeStreamRef.current = activeStream;
+  }, [activeStream]);
 
   const loadAudioDevices = async () => {
     const devices = await audioDevicesManager.getAudioInputDevices();
@@ -228,41 +239,79 @@ export const VoiceSTTTab: React.FC = () => {
     };
   };
 
-  const startVoiceTest = async () => {
-    if (isRecording) {
-      // Stop recording
+  const stopVoiceTest = () => {
+    if (vadRecorderRef.current) {
+      const { finalBlob, finalWindowIndex } = vadRecorderRef.current.stop();
+      if (finalBlob && finalWindowIndex !== undefined && finalBlob.size > 200) {
+        sendTestWindow(finalBlob, finalWindowIndex, true);
+      } else {
+        fetch('/api/stt/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            streamId: streamIdRef.current,
+            windowIndex: activeWindowIndex,
+            isWindowEnd: true,
+            base64Audio: 'AAAA',
+            isFinal: true
+          })
+        }).catch(() => {});
+      }
+      vadRecorderRef.current = null;
+    }
+    if (activeStreamRef.current) {
+      activeStreamRef.current.getTracks().forEach(t => t.stop());
+      activeStreamRef.current = null;
+    }
+    if (activeStream) {
+      activeStream.getTracks().forEach(t => t.stop());
+      setActiveStream(null);
+    }
+    setIsRecording(false);
+    setIsSpeaking(false);
+    actionLogger.info('voice', 'Тест микрофона: запись остановлена пользователем');
+  };
+
+  // Mutual exclusion: stop settings test if HUD starts recording
+  useEffect(() => {
+    const handleStopFromHud = () => {
+      if (isRecordingRef.current) {
+        stopVoiceTest();
+      }
+    };
+    window.addEventListener('stt:stop_settings_recording', handleStopFromHud);
+    return () => {
+      window.removeEventListener('stt:stop_settings_recording', handleStopFromHud);
+    };
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach(t => t.stop());
+        activeStreamRef.current = null;
+      }
       if (vadRecorderRef.current) {
-        const { finalBlob, finalWindowIndex } = vadRecorderRef.current.stop();
-        if (finalBlob && finalWindowIndex !== undefined && finalBlob.size > 200) {
-          sendTestWindow(finalBlob, finalWindowIndex, true);
-        } else {
-          fetch('/api/stt/stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              streamId: streamIdRef.current,
-              windowIndex: activeWindowIndex,
-              isWindowEnd: true,
-              base64Audio: 'AAAA',
-              isFinal: true
-            })
-          }).catch(() => {});
-        }
+        vadRecorderRef.current.stop();
         vadRecorderRef.current = null;
       }
-      if (activeStream) {
-        activeStream.getTracks().forEach(t => t.stop());
-        setActiveStream(null);
-      }
-      setIsRecording(false);
-      setIsSpeaking(false);
-      actionLogger.info('voice', 'Тест микрофона: запись завершена, завершение очереди whisper.cpp...');
+    };
+  }, []);
+
+  const startVoiceTest = async () => {
+    if (isRecording) {
+      stopVoiceTest();
       return;
     }
+
+    // Stop HUD recording if active
+    window.dispatchEvent(new CustomEvent('stt:stop_hud_recording'));
 
     try {
       const stream = await audioDevicesManager.getUserMediaWithDevice(selectedDeviceId);
       setActiveStream(stream);
+      activeStreamRef.current = stream;
 
       const streamId = `test_vad_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       streamIdRef.current = streamId;
@@ -520,8 +569,7 @@ export const VoiceSTTTab: React.FC = () => {
         <button
           type="button"
           onClick={startVoiceTest}
-          disabled={isTranscribing}
-          className={`w-14 h-14 rounded-full flex items-center justify-center transition-all select-none shadow-md ${
+          className={`w-14 h-14 rounded-full flex items-center justify-center transition-all select-none shadow-md cursor-pointer ${
             isRecording
               ? 'bg-[var(--c-mint)] text-white scale-105 animate-pulse'
               : 'bg-[var(--c-peach)] text-zinc-950 hover:opacity-90'

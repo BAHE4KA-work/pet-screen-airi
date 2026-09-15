@@ -211,7 +211,8 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       es.addEventListener('stt_status', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
-          if (data.streamId && streamIdRef.current && data.streamId !== streamIdRef.current) return;
+          // Strictly drop events not meant for this HUD stream session
+          if (!streamIdRef.current || data.streamId !== streamIdRef.current) return;
           if (data.status === 'transcribing') {
             setIsTranscribing(true);
             setTranscribingStatus(data.message || 'whisper.cpp распознаёт речь...');
@@ -232,7 +233,8 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       es.addEventListener('stt_result', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
-          if (data.streamId && streamIdRef.current && data.streamId !== streamIdRef.current) return;
+          // Strictly drop events not meant for this HUD stream session
+          if (!streamIdRef.current || data.streamId !== streamIdRef.current) return;
           if (data.text) {
             setPrompt(data.text);
             setIsTranscribing(false);
@@ -282,6 +284,19 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         }
       })
       .catch(() => {});
+  }, []);
+
+  // Stop HUD recording if Settings tab starts recording
+  useEffect(() => {
+    const handleStopFromSettings = () => {
+      if (streamActiveRef.current) {
+        handleToggleVoice();
+      }
+    };
+    window.addEventListener('stt:stop_hud_recording', handleStopFromSettings);
+    return () => {
+      window.removeEventListener('stt:stop_hud_recording', handleStopFromSettings);
+    };
   }, []);
 
   // Update suggestions whenever prompt changes
@@ -585,6 +600,9 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
     }
 
     try {
+      // Mutual exclusion: stop settings microphone test if it is running
+      window.dispatchEvent(new CustomEvent('stt:stop_settings_recording'));
+
       const stream = await audioDevicesManager.getUserMediaWithDevice(selectedDeviceId);
       setActiveAudioStream(stream);
       audioStreamRef.current = stream;
@@ -753,205 +771,80 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
         <form onSubmit={handleSubmit} className="p-3 pb-2 relative">
           <div
             id="hud-input-row"
-            className="flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all relative overflow-hidden"
+            className="flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all relative"
             style={{
               backgroundColor: 'var(--c-bg-tertiary)',
-              borderColor: isTranscribing
-                ? 'var(--c-peach)'
-                : loading
-                ? 'var(--c-peach)'
-                : isRecording
-                ? '#f97316'
-                : 'var(--c-border)',
-              boxShadow: isRecording
-                ? '0 0 16px rgba(249, 115, 22, 0.3)'
-                : isTranscribing
-                ? '0 0 16px rgba(255, 140, 66, 0.25)'
-                : 'none'
+              borderColor: isRecording ? '#f97316' : 'var(--c-border)',
+              boxShadow: isRecording ? '0 0 16px rgba(249, 115, 22, 0.25)' : 'none'
             }}
           >
-            {isRecording ? (
-              <span className="relative flex h-3 w-3 shrink-0">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-              </span>
-            ) : (
-              <Sparkles
-                className="w-4 h-4 shrink-0 transition-colors"
-                style={{ color: prompt ? 'var(--c-peach)' : 'var(--c-text-dim)' }}
-              />
-            )}
+            <Sparkles
+              className="w-4 h-4 shrink-0 transition-colors"
+              style={{ color: prompt ? 'var(--c-peach)' : 'var(--c-text-dim)' }}
+            />
 
-            {isRecording && !prompt.trim() ? (
-              <div
-                id="hud-voice-active-indicator"
-                onClick={() => inputRef.current?.focus()}
-                className="flex items-center gap-2.5 w-full cursor-text py-0.5 select-none"
-              >
-                {/* Animated sound wave bars */}
-                <div className="flex items-center gap-1 h-4 shrink-0">
-                  <span className={`w-1 rounded-full bg-red-400 transition-all duration-150 ${isSpeaking ? 'h-4 animate-pulse' : 'h-1.5 opacity-60'}`} />
-                  <span className={`w-1 rounded-full bg-red-400 transition-all duration-150 ${isSpeaking ? 'h-5 animate-pulse' : 'h-2.5 opacity-60'}`} style={{ animationDelay: '100ms' }} />
-                  <span className={`w-1 rounded-full bg-red-400 transition-all duration-150 ${isSpeaking ? 'h-3 animate-pulse' : 'h-1.5 opacity-60'}`} style={{ animationDelay: '200ms' }} />
-                  <span className={`w-1 rounded-full bg-red-400 transition-all duration-150 ${isSpeaking ? 'h-4.5 animate-pulse' : 'h-2 opacity-60'}`} style={{ animationDelay: '150ms' }} />
-                </div>
-                <span className="text-sm font-medium text-red-400/90 tracking-wide">
-                  {isSpeaking ? 'Идёт голосовой ввод... (слушаю речь)' : 'Идёт голосовой ввод... говорите в микрофон'}
-                </span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 w-full relative">
-                <input
-                  ref={inputRef}
-                  id="hud-query-input"
-                  type="text"
-                  value={prompt}
-                  onFocus={() => setIsInputFocused(true)}
-                  onBlur={() => setTimeout(() => setIsInputFocused(false), 200)}
-                  onChange={e => setPrompt(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Спросите что-нибудь или вызовите инструмент..."
-                  className="w-full bg-transparent text-sm focus:outline-hidden placeholder:text-[var(--c-text-dim)]"
-                  style={{ color: 'var(--c-text)' }}
-                  disabled={loading}
-                />
-              </div>
-            )}
+            <input
+              ref={inputRef}
+              id="hud-query-input"
+              type="text"
+              value={prompt}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setTimeout(() => setIsInputFocused(false), 200)}
+              onChange={e => setPrompt(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={isRecording ? 'Слушаю... говорите в микрофон' : 'Спросите что-нибудь или вызовите инструмент...'}
+              className="w-full bg-transparent text-sm focus:outline-hidden placeholder:text-[var(--c-text-dim)]"
+              style={{ color: 'var(--c-text)' }}
+              disabled={loading}
+            />
 
-            {/* 1. Single loading indicator representing the processing of window chunks */}
-            {(isTranscribing || activeWindowsCount > 0) && (
-              <div
-                id="hud-chunk-processing-loader"
-                className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[var(--c-peach)]/15 border border-[var(--c-peach)]/40 text-[var(--c-peach)] text-xs shrink-0 select-none"
-                title="Обработка чанков окон whisper.cpp"
-              >
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--c-peach)]" />
-                <span className="text-[11px] font-medium">Обработка</span>
-              </div>
-            )}
-
-            {/* 2. Status indicator: current window | completed windows decoding% (clean, no loader) */}
-            {(isRecording || sentWindowsCount > 0 || isTranscribing) && (
-              <div
-                id="hud-stt-status-indicator"
-                className="flex items-center px-2.5 py-1 rounded-lg bg-zinc-800/90 border border-zinc-700/60 font-mono text-xs text-zinc-200 shrink-0 select-none"
-                title={`Окно #${activeWindowIndex} | Обработано: ${completedWindowsCount} | Декодирование: ${sentWindowsCount > 0 ? Math.min(100, Math.round((completedWindowsCount / sentWindowsCount) * 100)) : (completedWindowsCount > 0 ? 100 : 0)}%`}
-              >
-                <span className="font-semibold text-zinc-100">{activeWindowIndex}</span>
-                <span className="text-zinc-500 mx-1.5">|</span>
-                <span className="text-zinc-300">{completedWindowsCount}</span>
-                <span className="text-zinc-400 ml-2">
-                  {sentWindowsCount > 0
-                    ? Math.min(100, Math.round((completedWindowsCount / sentWindowsCount) * 100))
-                    : completedWindowsCount > 0
-                    ? 100
-                    : 0}%
-                </span>
-              </div>
-            )}
-
-            {prompt && !isTranscribing && activeWindowsCount === 0 && (
+            {prompt && !loading && !isRecording && (
               <button
                 type="button"
                 onClick={handleClear}
-                className="p-1 rounded text-[var(--c-text-muted)] hover:text-[var(--c-text)] transition-colors"
+                className="p-1 rounded text-[var(--c-text-muted)] hover:text-[var(--c-text)] transition-colors shrink-0 cursor-pointer"
+                title="Очистить"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
 
-            {/* Live Audio Visualizer Equalizer Bars while recording */}
-            {isRecording && (
-              <AudioVolumeVisualizer
-                stream={activeAudioStream}
-                isActive={isRecording}
-                barCount={4}
-                showLevelText={false}
-              />
-            )}
-
-            {/* Microphone STT button with device quick switcher */}
-            <div className="relative flex items-center">
-              <button
-                type="button"
-                id="hud-voice-btn"
-                onClick={handleToggleVoice}
-                title={isRecording ? 'Остановить запись микрофона' : 'Голосовой ввод'}
-                className={`p-1.5 rounded-lg text-xs transition-all flex items-center gap-1 ${
-                  isRecording
-                    ? 'bg-orange-500 text-white animate-pulse'
-                    : 'text-[var(--c-text-muted)] hover:text-[var(--c-peach)] hover:bg-white/5'
-                }`}
-              >
-                {isRecording ? (
-                  <MicOff className="w-3.5 h-3.5" />
-                ) : (
-                  <Mic className="w-3.5 h-3.5" />
-                )}
-              </button>
-
-              {audioDevices.length > 1 && !isRecording && !isTranscribing && (
-                <button
-                  type="button"
-                  onClick={() => setShowMicMenu(!showMicMenu)}
-                  title="Выбрать микрофон"
-                  className="p-1 -ml-1 text-[var(--c-text-dim)] hover:text-[var(--c-peach)]"
-                >
-                  <ChevronDown className="w-2.5 h-2.5" />
-                </button>
+            {/* Single Voice STT Button: transforms into active sound stereogram while recording */}
+            <button
+              type="button"
+              id="hud-voice-btn"
+              onClick={handleToggleVoice}
+              title={isRecording ? 'Остановить запись (нажмите на стереограмму)' : 'Голосовой ввод'}
+              className={`p-1.5 rounded-lg text-xs transition-all flex items-center justify-center shrink-0 cursor-pointer ${
+                isRecording
+                  ? 'bg-orange-500/20 border border-orange-500/50 text-orange-400 px-2'
+                  : 'text-[var(--c-text-muted)] hover:text-[var(--c-peach)] hover:bg-white/5'
+              }`}
+            >
+              {isRecording ? (
+                <AudioVolumeVisualizer
+                  stream={activeAudioStream}
+                  isActive={isRecording}
+                  barCount={6}
+                  className="!bg-transparent !border-0 !p-0 !gap-[2px]"
+                  showLevelText={false}
+                />
+              ) : (
+                <Mic className="w-4 h-4" />
               )}
-
-              {/* Mic Device Selector Dropdown */}
-              {showMicMenu && (
-                <div
-                  className="absolute right-0 top-full mt-2 w-64 p-2 rounded-xl border shadow-2xl z-50 animate-fadeIn text-xs"
-                  style={{
-                    backgroundColor: 'var(--c-bg-secondary)',
-                    borderColor: 'var(--c-border)'
-                  }}
-                >
-                  <div className="text-[10px] font-semibold text-[var(--c-text-dim)] uppercase tracking-wider mb-1 px-1">
-                    Устройство ввода микрофона
-                  </div>
-                  <div className="space-y-1 max-h-48 overflow-y-auto">
-                    {audioDevices.map(dev => {
-                      const isSelected = selectedDeviceId === dev.deviceId;
-                      return (
-                        <button
-                          key={dev.deviceId}
-                          type="button"
-                          onClick={() => {
-                            setSelectedDeviceId(dev.deviceId);
-                            audioDevicesManager.setStoredDeviceId(dev.deviceId);
-                            setShowMicMenu(false);
-                            soundEffects.playCompletionPing();
-                          }}
-                          className={`w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between text-[11px] transition-colors ${
-                            isSelected
-                              ? 'bg-[var(--c-peach-surface)] text-[var(--c-peach-light)] font-medium'
-                              : 'hover:bg-white/5 text-[var(--c-text-muted)]'
-                          }`}
-                        >
-                          <span className="truncate pr-1">{dev.label}</span>
-                          {isSelected && <CheckCircle2 className="w-3 h-3 shrink-0 text-[var(--c-peach)]" />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
+            </button>
 
             {/* Submit arrow button */}
             <button
               type="submit"
               id="hud-submit-btn"
-              disabled={!prompt.trim() || loading}
-              className="p-1.5 rounded-lg text-xs transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              disabled={!prompt.trim() || loading || isRecording}
+              className="p-1.5 rounded-lg text-xs transition-all disabled:opacity-30 disabled:cursor-not-allowed shrink-0 cursor-pointer"
               style={{
-                backgroundColor: prompt.trim() && !loading ? 'var(--c-peach)' : 'transparent',
-                color: prompt.trim() && !loading ? '#0a0c10' : 'var(--c-text-dim)'
+                backgroundColor: prompt.trim() && !loading && !isRecording ? 'var(--c-peach)' : 'transparent',
+                color: prompt.trim() && !loading && !isRecording ? '#0a0c10' : 'var(--c-text-dim)'
               }}
+              title={isRecording ? 'Остановите запись перед отправкой' : 'Отправить запрос'}
             >
               {loading ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: 'var(--c-peach)' }} />
@@ -960,40 +853,6 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               )}
             </button>
           </div>
-
-          {/* Recognition & VAD live status indicator row */}
-          {(isRecording || isTranscribing || activeWindowsCount > 0) && (
-            <div
-              id="hud-transcribing-status-bar"
-              className="flex items-center justify-between px-2 pt-1.5 text-[11px] font-mono text-[var(--c-peach)]"
-            >
-              <div className="flex items-center gap-1.5">
-                {activeWindowsCount > 0 ? (
-                  <>
-                    <Loader2 className="w-3 h-3 animate-spin text-[var(--c-peach)]" />
-                    <span>
-                      whisper.cpp: декодирование {currentProcessingWindow !== null ? `окна #${currentProcessingWindow}` : 'аудио'} ({activeWindowsCount} в очереди)
-                    </span>
-                  </>
-                ) : isRecording ? (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="text-emerald-400">
-                      Стрим активен (окно #{activeWindowIndex}). Пауза &gt; 300мс отправляет фразу в whisper.cpp.
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    <span>{transcribingStatus || 'whisper.cpp: декодирование аудио...'}</span>
-                  </>
-                )}
-              </div>
-              <span className="text-[10px] text-[var(--c-text-dim)]">
-                {isRecording ? `Окно #${activeWindowIndex}` : `Прошло: ${transcribingSeconds}с`}
-              </span>
-            </div>
-          )}
 
           {/* Autocomplete & Fuzzy History Suggestions (Item 4) */}
           {suggestions.length > 0 && isInputFocused && !loading && (

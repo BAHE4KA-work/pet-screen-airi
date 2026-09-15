@@ -256,8 +256,6 @@ export class VadAudioRecorder {
         finalWindowIndex = this.currentWindowIndex;
         this.currentWindowIndex += 1;
         finalBlob = encodeWav(combined, this.config.targetSampleRate);
-        const durationSec = Math.round((combined.length / this.config.targetSampleRate) * 100) / 100;
-        this.callbacks.onWindowReady?.(finalBlob, finalWindowIndex, windowRms, durationSec);
       }
       this.pcmChunks = [];
       this.hasSpokenInWindow = false;
