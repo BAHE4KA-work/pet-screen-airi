@@ -22,6 +22,7 @@ import {
 } from './types';
 import { soundEffects } from './utils/audioEffects';
 import { electronBridge } from './utils/electronBridge';
+import { tauriBridge } from './services/tauriBridge';
 import { themeManager } from './utils/themeManager';
 import { hotkeyManager } from './utils/hotkeyManager';
 import { actionLogger } from './utils/actionLogger';
@@ -194,16 +195,22 @@ export default function App() {
     }
   }, [isOverlayMode]);
 
-  // Dynamic Electron click-through / interactivity management
+  // Dynamic Electron & Tauri hardware click-through / interactivity management
   useEffect(() => {
-    if (!electronBridge.isElectron()) return;
+    const isDesktopEnv = electronBridge.isElectron() || tauriBridge.isTauri();
+    if (!isDesktopEnv) return;
 
     let isInteractiveCurrent: boolean | null = null;
 
     const setInteractivity = (shouldBeInteractive: boolean) => {
       if (shouldBeInteractive !== isInteractiveCurrent) {
         isInteractiveCurrent = shouldBeInteractive;
-        electronBridge.setInteractive(shouldBeInteractive);
+        if (electronBridge.isElectron()) {
+          electronBridge.setInteractive(shouldBeInteractive);
+        }
+        if (tauriBridge.isTauri()) {
+          tauriBridge.setClickThrough(!shouldBeInteractive);
+        }
       }
     };
 
