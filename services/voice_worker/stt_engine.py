@@ -43,15 +43,20 @@ class STTEngine:
             logger.error(f"Failed to decode base64 audio: {e}")
             return {"text": "", "duration_sec": 0.0, "confidence": 0.0}
 
-        if not raw_bytes or len(raw_bytes) < 100:
+        if not raw_bytes or len(raw_bytes) < 2000:
+            logger.debug(f"Audio payload too small ({len(raw_bytes) if raw_bytes else 0} bytes), skipping whisper.cpp.")
             return {"text": "", "duration_sec": 0.0, "confidence": 0.0}
 
         tmp_in = None
         tmp_wav = None
 
         try:
+            # Check if payload is already a WAV file (RIFF header)
+            is_wav = len(raw_bytes) >= 12 and raw_bytes[:4] == b"RIFF" and raw_bytes[8:12] == b"WAVE"
+            suffix = ".wav" if is_wav else ".webm"
+
             # 1. Write incoming stream to temp file
-            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
                 f.write(raw_bytes)
                 tmp_in = f.name
 
@@ -64,7 +69,11 @@ class STTEngine:
                 "-c:a", "pcm_s16le",
                 tmp_wav
             ]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            if res.returncode != 0:
+                err_msg = res.stderr.decode("utf-8", errors="ignore")[:250].strip()
+                logger.warning(f"ffmpeg conversion note: {err_msg}")
+                return {"text": "", "duration_sec": 0.0, "confidence": 0.0}
 
             # 3. Transcribe via whisper.cpp
             if self.model is not None:

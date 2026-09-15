@@ -28,6 +28,49 @@ export interface StreamSession {
 
 type BroadcasterFn = (event: string, data: any) => void;
 
+/**
+ * Calculates RMS volume of an audio buffer (WAV 16-bit PCM or raw)
+ * to filter out pure silence before sending to Whisper.
+ */
+export function calculateAudioRms(buffer: Buffer): { rms: number; isSilent: boolean } {
+  if (!buffer || buffer.length < 1500) {
+    return { rms: 0, isSilent: true };
+  }
+
+  // RIFF WAV 16-bit PCM parser
+  if (buffer.length >= 44 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WAVE') {
+    // Find data chunk
+    let dataOffset = 44;
+    for (let i = 12; i < Math.min(buffer.length - 8, 200); i++) {
+      if (buffer.toString('ascii', i, i + 4) === 'data') {
+        dataOffset = i + 8;
+        break;
+      }
+    }
+
+    let sum = 0;
+    let count = 0;
+    for (let i = dataOffset; i < buffer.length - 1; i += 2) {
+      const sample = buffer.readInt16LE(i) / 32768.0;
+      sum += sample * sample;
+      count++;
+    }
+    const rms = count > 0 ? Math.sqrt(sum / count) : 0;
+    return { rms, isSilent: rms < 0.015 };
+  }
+
+  // Fallback heuristic for arbitrary compressed audio / WebM
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < buffer.length; i += 4) {
+    const val = (buffer[i] - 128) / 128.0;
+    sum += val * val;
+    count++;
+  }
+  const rms = count > 0 ? Math.sqrt(sum / count) : 0;
+  return { rms, isSilent: rms < 0.015 };
+}
+
 class STTStreamBufferManager {
   private sessions = new Map<string, StreamSession>();
   private broadcaster: BroadcasterFn = () => {};
@@ -90,8 +133,33 @@ class STTStreamBufferManager {
       session.isClosed = true;
     }
 
-    // Only add non-empty windows or final marker
+    // Check if window is pure silence before buffering or sending to Whisper
     if (audioBuffer && audioBuffer.length > 200) {
+      const { rms, isSilent } = calculateAudioRms(audioBuffer);
+
+      if (isSilent) {
+        console.log(`[STTStreamBuffer] Session ${streamId}: Window #${windowIndex} SKIPPED (silence detected, RMS: ${rms.toFixed(4)}, size: ${audioBuffer.length}B). Whisper CPU skipped.`);
+
+        this.broadcast('stt_window_skipped', {
+          streamId,
+          windowIndex,
+          reason: 'silence',
+          rms: Number(rms.toFixed(4)),
+          isFinal: session.isClosed
+        });
+
+        if (session.isClosed && session.queue.length === 0 && !session.isProcessing) {
+          this.finalizeSession(session);
+        }
+
+        return {
+          windowIndex,
+          text: '',
+          status: 'skipped_silence',
+          queueLength: session.queue.length
+        };
+      }
+
       const windowEntry: StreamWindow = {
         index: windowIndex,
         audioBuffer,
@@ -102,7 +170,7 @@ class STTStreamBufferManager {
       session.windows.set(windowIndex, windowEntry);
       session.queue.push(windowIndex);
 
-      console.log(`[STTStreamBuffer] Session ${streamId}: Window #${windowIndex} buffered (${audioBuffer.length} bytes). Queue length: ${session.queue.length}`);
+      console.log(`[STTStreamBuffer] Session ${streamId}: Window #${windowIndex} buffered (${audioBuffer.length} bytes, RMS: ${rms.toFixed(4)}). Queue length: ${session.queue.length}`);
 
       this.broadcast('stt_window_queued', {
         streamId,
@@ -110,6 +178,8 @@ class STTStreamBufferManager {
         queueLength: session.queue.length,
         isFinal: session.isClosed
       });
+    } else if (isFinal && session.queue.length === 0 && !session.isProcessing) {
+      this.finalizeSession(session);
     }
 
     // Trigger queue worker asynchronously
@@ -158,9 +228,14 @@ class STTStreamBufferManager {
     });
 
     try {
+      const isWav = windowItem.audioBuffer.length >= 12 &&
+        windowItem.audioBuffer.toString('ascii', 0, 4) === 'RIFF' &&
+        windowItem.audioBuffer.toString('ascii', 8, 12) === 'WAVE';
+      const filename = isWav ? `window_${windowIndex}.wav` : `window_${windowIndex}.webm`;
+
       const result = await sttService.transcribeAudio(
         windowItem.audioBuffer,
-        `window_${windowIndex}.webm`
+        filename
       );
 
       windowItem.status = 'completed';

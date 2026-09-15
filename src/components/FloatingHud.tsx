@@ -24,6 +24,7 @@ import { electronBridge } from '../utils/electronBridge';
 import { audioDevicesManager, AudioDeviceOption } from '../utils/audioDevices';
 import { actionLogger } from '../utils/actionLogger';
 import { AudioVolumeVisualizer } from './ui/AudioVolumeVisualizer';
+import { VadAudioRecorder } from '../utils/audioPcmRecorder';
 
 interface FloatingHudProps {
   status: ModelStatus | null;
@@ -103,6 +104,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
   const vadIntervalRef = useRef<any>(null);
   const receivedWindowsRef = useRef<Map<number, string>>(new Map());
   const activeWindowChunksRef = useRef<Blob[]>([]);
+  const vadRecorderRef = useRef<VadAudioRecorder | null>(null);
 
   // Draggable positioning state
   const [position, setPosition] = useState<{ x: number; y: number }>(() => {
@@ -176,6 +178,19 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
             });
           }
           setActiveWindowsCount(prev => Math.max(0, prev - 1));
+          if (data.isFinal) {
+            setIsTranscribing(false);
+            setTranscribingStatus('');
+            setCurrentProcessingWindow(null);
+          }
+        } catch {}
+      });
+
+      es.addEventListener('stt_window_skipped', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          setActiveWindowsCount(prev => Math.max(0, prev - 1));
+          actionLogger.info('voice', `whisper.cpp: окно #${data.windowIndex} пропущено (тишина, RMS: ${data.rms ?? 0})`);
           if (data.isFinal) {
             setIsTranscribing(false);
             setTranscribingStatus('');
@@ -448,7 +463,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
 
   // Helper to send a completed speech window (bounded by VAD silence >= 300ms)
   const sendWindowAudio = async (blob: Blob, winIdx: number, isFinal: boolean) => {
-    if (blob.size < 150) {
+    if (blob.size < 200) {
       if (isFinal) {
         try {
           await fetch('/api/stt/stream', {
@@ -478,7 +493,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       const base64 = (reader.result as string)?.split(',')[1] || '';
       if (!base64) return;
 
-      actionLogger.info('voice', `VAD: Окно #${winIdx} отправлено в очередь декодирования (${blob.size} байт, пауза >300мс)...`, {
+      actionLogger.info('voice', `VAD: Окно #${winIdx} (WAV 16кГц, ${blob.size} байт) отправлено в очередь декодирования...`, {
         streamId: streamIdRef.current,
         windowIndex: winIdx,
         isFinal
@@ -499,13 +514,16 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
           })
         });
         const data = await res.json();
-        if (data.text) {
-          receivedWindowsRef.current.set(winIdx, data.text);
+        if (data.status === 'skipped_silence') {
+          setActiveWindowsCount(prev => Math.max(0, prev - 1));
+        } else if (data.text) {
+          receivedWindowsRef.current.set(winIdx, data.text.trim());
           const ordered = Array.from(receivedWindowsRef.current.entries())
             .sort(([a], [b]) => a - b)
             .map(([, t]) => t)
             .join(' ');
           setPrompt(ordered);
+          inputRef.current?.focus();
         }
       } catch (err: any) {
         console.warn(`[STT Window #${winIdx}] Transmission error:`, err);
@@ -513,47 +531,31 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
     };
   };
 
-  const startWindowRecorder = (stream: MediaStream, winIdx: number) => {
-    if (!stream || !stream.active) return;
-    activeWindowChunksRef.current = [];
-    try {
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          activeWindowChunksRef.current.push(e.data);
-        }
-      };
-      recorder.onstop = () => {
-        if (activeWindowChunksRef.current.length > 0) {
-          const blob = new Blob(activeWindowChunksRef.current, { type: 'audio/webm' });
-          sendWindowAudio(blob, winIdx, !streamActiveRef.current);
-        }
-      };
-      recorder.start(100);
-      mediaRecorderRef.current = recorder;
-    } catch (err) {
-      console.warn('[startWindowRecorder] Recorder initialization failed:', err);
-    }
-  };
-
-  // Local Voice STT handler with VAD-based sliding pause windows
+  // Local Voice STT handler with VadAudioRecorder (sliding pause windows)
   const handleToggleVoice = async () => {
     if (isRecording) {
       streamActiveRef.current = false;
-      if (vadIntervalRef.current) {
-        clearInterval(vadIntervalRef.current);
-        vadIntervalRef.current = null;
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-        audioContextRef.current = null;
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
-      if (speechRecognitionRef.current) {
-        try { speechRecognitionRef.current.stop(); } catch {}
-        speechRecognitionRef.current = null;
+      if (vadRecorderRef.current) {
+        const { finalBlob, finalWindowIndex } = vadRecorderRef.current.stop();
+        if (finalBlob && finalWindowIndex !== undefined && finalBlob.size > 200) {
+          sendWindowAudio(finalBlob, finalWindowIndex, true);
+        } else {
+          // Send finalize marker
+          fetch('/api/stt/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              streamId: streamIdRef.current,
+              windowIndex: windowIndexRef.current,
+              isWindowEnd: true,
+              base64Audio: 'AAAA',
+              isFinal: true,
+              language: sttConfig.language || 'ru',
+              modelFile: sttConfig.modelFile
+            })
+          }).catch(() => {});
+        }
+        vadRecorderRef.current = null;
       }
       if (audioStreamRef.current) {
         audioStreamRef.current.getTracks().forEach(t => t.stop());
@@ -576,87 +578,48 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
       streamIdRef.current = streamId;
       windowIndexRef.current = 0;
       setActiveWindowIndex(0);
-      hasSpokenInWindowRef.current = false;
-      speechStartTimeRef.current = 0;
-      lastSpeechTimeRef.current = 0;
       setActiveWindowsCount(0);
       setCurrentProcessingWindow(null);
       receivedWindowsRef.current.clear();
 
-      // Setup Web Audio API Analyser for real-time VAD silence detection
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      audioContextRef.current = audioCtx;
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.2;
-      source.connect(analyser);
-      analyserRef.current = analyser;
-
       const vadPauseMs = sttConfig.vadPauseMs ?? 300;
       const vadMinSpeechMs = sttConfig.vadMinSpeechMs ?? 350;
-      const vadThreshold = sttConfig.vadThreshold ?? 0.03;
+      const vadThreshold = sttConfig.vadThreshold ?? 0.025;
 
-      // Start recorder for first speech window (#0)
-      startWindowRecorder(stream, 0);
-
-      // Real-time VAD Monitoring Loop (samples every 35ms)
-      const vadBuffer = new Uint8Array(analyser.frequencyBinCount);
-      vadIntervalRef.current = setInterval(() => {
-        if (!streamActiveRef.current || !analyserRef.current) return;
-        analyserRef.current.getByteTimeDomainData(vadBuffer);
-
-        let sum = 0;
-        const len = vadBuffer.length;
-        for (let i = 0; i < len; i++) {
-          const norm = (vadBuffer[i] - 128) / 128;
-          sum += norm * norm;
-        }
-        const rms = Math.sqrt(sum / len);
-        const isVoice = rms > vadThreshold;
-        const now = Date.now();
-
-        if (isVoice) {
-          if (!hasSpokenInWindowRef.current) {
-            hasSpokenInWindowRef.current = true;
-            speechStartTimeRef.current = now;
-          }
-          lastSpeechTimeRef.current = now;
-          setIsSpeaking(true);
-        } else {
-          setIsSpeaking(false);
-          // Check if speech was detected and now a silence pause >= vadPauseMs occurred
-          if (hasSpokenInWindowRef.current && lastSpeechTimeRef.current > 0) {
-            const silenceDuration = now - lastSpeechTimeRef.current;
-            const speechDuration = lastSpeechTimeRef.current - speechStartTimeRef.current;
-
-            if (silenceDuration >= vadPauseMs && speechDuration >= vadMinSpeechMs) {
-              // VAD Pause Threshold reached (>300ms)!
-              const finishedIdx = windowIndexRef.current;
-              windowIndexRef.current += 1;
-              setActiveWindowIndex(windowIndexRef.current);
-              hasSpokenInWindowRef.current = false;
-              lastSpeechTimeRef.current = 0;
-              speechStartTimeRef.current = 0;
-
-              actionLogger.info('voice', `VAD: Пауза ${silenceDuration}мс (>300мс). Окно #${finishedIdx} уходит на декодирование в whisper.cpp. Начинается окно #${windowIndexRef.current}`);
-
-              // Stop current window recorder to flush its audio to sendWindowAudio
-              if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-                mediaRecorderRef.current.stop();
-              }
-
-              // Instantly start recorder for next window, keeping audio capture seamless
-              if (streamActiveRef.current) {
-                startWindowRecorder(stream, windowIndexRef.current);
-              }
-            }
+      const recorder = new VadAudioRecorder(
+        {
+          vadPauseMs,
+          vadMinSpeechMs,
+          vadThreshold,
+          targetSampleRate: 16000
+        },
+        {
+          onVolumeLevel: (_rms, isVoice) => {
+            setIsSpeaking(isVoice);
+          },
+          onSpeechStart: (winIdx) => {
+            setActiveWindowIndex(winIdx);
+            windowIndexRef.current = winIdx;
+            actionLogger.info('voice', `VAD: Речь в окне #${winIdx}...`);
+          },
+          onSpeechPause: (winIdx, pauseMs) => {
+            // Silence pause detected
+          },
+          onWindowReady: (wavBlob, winIdx, rms, durationSec) => {
+            actionLogger.info('voice', `VAD: Окно #${winIdx} (${durationSec}с, RMS: ${rms.toFixed(3)}) отправлено в whisper.cpp...`);
+            sendWindowAudio(wavBlob, winIdx, !streamActiveRef.current);
+          },
+          onWindowSkipped: (winIdx, reason) => {
+            actionLogger.info('voice', `VAD: Окно #${winIdx} пропущено (${reason === 'silence' ? 'тишина' : 'слишком короткий звук'})`);
           }
         }
-      }, 35);
+      );
+
+      await recorder.start(stream);
+      vadRecorderRef.current = recorder;
 
       setIsRecording(true);
-      actionLogger.info('voice', `Голосовой стрим с VAD-окнами активен (пауза: ${vadPauseMs}мс, окно #0)...`);
+      actionLogger.info('voice', `Голосовой ввод с VAD-окнами активен (пауза: ${vadPauseMs}мс, окно #0)...`);
       soundEffects.playToolCallCue();
     } catch (err: any) {
       setIsRecording(false);
@@ -806,28 +769,69 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               />
             )}
 
-            <input
-              ref={inputRef}
-              id="hud-query-input"
-              type="text"
-              value={prompt}
-              onFocus={() => setIsInputFocused(true)}
-              onBlur={() => setTimeout(() => setIsInputFocused(false), 200)}
-              onChange={e => setPrompt(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                isRecording
-                  ? `Говорите свободно... Окно #${activeWindowIndex} (пауза > 300мс отправляет фразу)`
-                  : activeWindowsCount > 0
-                  ? `whisper.cpp декодирует (${activeWindowsCount} в очереди)...`
-                  : isTranscribing
-                  ? `Распознавание речи whisper.cpp... (${transcribingSeconds}с)`
-                  : 'Спросите что-нибудь или вызовите инструмент...'
-              }
-              className="w-full bg-transparent text-sm focus:outline-hidden placeholder:text-[var(--c-text-dim)]"
-              style={{ color: 'var(--c-text)' }}
-              disabled={loading}
-            />
+            {isRecording && !prompt.trim() ? (
+              <div
+                id="hud-voice-active-indicator"
+                onClick={() => inputRef.current?.focus()}
+                className="flex items-center gap-2.5 w-full cursor-text py-0.5 select-none"
+              >
+                {/* Animated sound wave bars */}
+                <div className="flex items-center gap-1 h-4 shrink-0">
+                  <span className={`w-1 rounded-full bg-red-400 transition-all duration-150 ${isSpeaking ? 'h-4 animate-pulse' : 'h-1.5 opacity-60'}`} />
+                  <span className={`w-1 rounded-full bg-red-400 transition-all duration-150 ${isSpeaking ? 'h-5 animate-pulse' : 'h-2.5 opacity-60'}`} style={{ animationDelay: '100ms' }} />
+                  <span className={`w-1 rounded-full bg-red-400 transition-all duration-150 ${isSpeaking ? 'h-3 animate-pulse' : 'h-1.5 opacity-60'}`} style={{ animationDelay: '200ms' }} />
+                  <span className={`w-1 rounded-full bg-red-400 transition-all duration-150 ${isSpeaking ? 'h-4.5 animate-pulse' : 'h-2 opacity-60'}`} style={{ animationDelay: '150ms' }} />
+                </div>
+                <span className="text-sm font-medium text-red-400/90 animate-pulse tracking-wide">
+                  {isSpeaking ? 'Слушаю вас... говорите' : 'Идёт голосовой ввод... говорите в микрофон'}
+                </span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/30 text-red-300">
+                  Окно #{activeWindowIndex}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 w-full relative">
+                <input
+                  ref={inputRef}
+                  id="hud-query-input"
+                  type="text"
+                  value={prompt}
+                  onFocus={() => setIsInputFocused(true)}
+                  onBlur={() => setTimeout(() => setIsInputFocused(false), 200)}
+                  onChange={e => setPrompt(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    activeWindowsCount > 0
+                      ? `whisper.cpp декодирует (${activeWindowsCount} в очереди)...`
+                      : isTranscribing
+                      ? `Распознавание речи whisper.cpp... (${transcribingSeconds}с)`
+                      : 'Спросите что-нибудь или вызовите инструмент...'
+                  }
+                  className="w-full bg-transparent text-sm focus:outline-hidden placeholder:text-[var(--c-text-dim)]"
+                  style={{ color: 'var(--c-text)' }}
+                  disabled={loading}
+                />
+
+                {/* When recording AND prompt has text: show the inline token loader indicator for next window! */}
+                {isRecording && prompt.trim() && (
+                  <div
+                    id="hud-next-token-loader"
+                    className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-red-500/15 border border-red-500/40 text-red-300 text-xs shrink-0 select-none animate-pulse"
+                    title="Запись и декодирование следующего фрагмента речи (пауза > 300мс зафиксирует фразу)"
+                  >
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                    </span>
+                    <span className="text-[10px] font-mono font-medium">
+                      {activeWindowsCount > 0
+                        ? `+ Окно #${activeWindowIndex} (декодирование...)`
+                        : `+ Окно #${activeWindowIndex} (слушаю...)`}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Active Windows Queue / Transcribing Indicator Badge */}
             {(isTranscribing || activeWindowsCount > 0) && (

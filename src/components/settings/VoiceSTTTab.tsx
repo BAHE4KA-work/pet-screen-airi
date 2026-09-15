@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, Check, RotateCw, AlertCircle, Square, MicOff, Volume2, Radio, Activity } from 'lucide-react';
+import { Mic, Check, RotateCw, AlertCircle, Square, MicOff, Volume2, Radio, Activity, CheckCircle2, Clock } from 'lucide-react';
 import { STTConfig, LocalModelsOverview } from '../../types';
 import { soundEffects } from '../../utils/audioEffects';
 import { audioDevicesManager, AudioDeviceOption } from '../../utils/audioDevices';
@@ -9,6 +9,15 @@ import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Select } from '../ui/Select';
 import { Input } from '../ui/Input';
+import { VadAudioRecorder } from '../../utils/audioPcmRecorder';
+
+interface WindowTestItem {
+  index: number;
+  text: string;
+  durationSec?: number;
+  rms?: number;
+  status: 'recording' | 'processing' | 'completed' | 'skipped_silence';
+}
 
 export const VoiceSTTTab: React.FC = () => {
   const [config, setConfig] = useState<STTConfig>({
@@ -17,7 +26,10 @@ export const VoiceSTTTab: React.FC = () => {
     modelFile: 'whisper-base-ru.bin',
     language: 'ru',
     enabled: true,
-    useWebSpeechFallback: true
+    useWebSpeechFallback: true,
+    vadPauseMs: 300,
+    vadMinSpeechMs: 350,
+    vadThreshold: 0.025
   });
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
   const [audioDevices, setAudioDevices] = useState<AudioDeviceOption[]>([]);
@@ -30,10 +42,14 @@ export const VoiceSTTTab: React.FC = () => {
   const [streamChunksSent, setStreamChunksSent] = useState<number>(0);
   const [streamStatusText, setStreamStatusText] = useState<string>('');
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  // VAD & Window test state
+  const [testWindows, setTestWindows] = useState<WindowTestItem[]>([]);
+  const [activeWindowIndex, setActiveWindowIndex] = useState<number>(0);
+  const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+
+  const vadRecorderRef = useRef<VadAudioRecorder | null>(null);
   const streamIdRef = useRef<string>('');
-  const chunkIndexRef = useRef<number>(0);
+  const receivedWindowsRef = useRef<Map<number, string>>(new Map());
 
   const loadAudioDevices = async () => {
     const devices = await audioDevicesManager.getAudioInputDevices();
@@ -50,7 +66,6 @@ export const VoiceSTTTab: React.FC = () => {
   useEffect(() => {
     loadAudioDevices();
 
-    // Listen for device changes (plugging in new USB mic, headsets)
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
       navigator.mediaDevices.addEventListener('devicechange', loadAudioDevices);
       return () => navigator.mediaDevices.removeEventListener('devicechange', loadAudioDevices);
@@ -64,7 +79,6 @@ export const VoiceSTTTab: React.FC = () => {
   };
 
   useEffect(() => {
-    // Load config
     fetch('/api/stt/config')
       .then(r => r.json())
       .then(c => {
@@ -72,7 +86,6 @@ export const VoiceSTTTab: React.FC = () => {
       })
       .catch(console.error);
 
-    // Load available files from models/stt
     fetch('/api/models/local')
       .then(r => r.json())
       .then((data: LocalModelsOverview) => {
@@ -84,6 +97,67 @@ export const VoiceSTTTab: React.FC = () => {
         }
       })
       .catch(console.error);
+  }, []);
+
+  // SSE Listener for test window decoding events
+  useEffect(() => {
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/events');
+      es.addEventListener('stt_window_processing', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.streamId === streamIdRef.current) {
+            setTestWindows(prev => prev.map(w => w.index === data.windowIndex ? { ...w, status: 'processing' } : w));
+            setStreamStatusText(`whisper.cpp: декодирование окна #${data.windowIndex}...`);
+          }
+        } catch {}
+      });
+
+      es.addEventListener('stt_window_result', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.streamId === streamIdRef.current && data.text?.trim()) {
+            const winText = data.text.trim();
+            receivedWindowsRef.current.set(data.windowIndex, winText);
+            setTestWindows(prev => prev.map(w => w.index === data.windowIndex ? {
+              ...w,
+              status: 'completed',
+              text: winText,
+              durationSec: data.duration_sec
+            } : w));
+
+            const fullText = Array.from(receivedWindowsRef.current.entries())
+              .sort(([a], [b]) => a - b)
+              .map(([, t]) => t)
+              .join(' ');
+            setTestTranscript(fullText);
+            soundEffects.playCompletionPing();
+          }
+          if (data.isFinal) {
+            setIsTranscribing(false);
+            setStreamStatusText('');
+          }
+        } catch {}
+      });
+
+      es.addEventListener('stt_window_skipped', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.streamId === streamIdRef.current) {
+            setTestWindows(prev => prev.map(w => w.index === data.windowIndex ? {
+              ...w,
+              status: 'skipped_silence',
+              text: '(тишина пропущена)'
+            } : w));
+          }
+        } catch {}
+      });
+    } catch {}
+
+    return () => {
+      es?.close();
+    };
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -104,145 +178,169 @@ export const VoiceSTTTab: React.FC = () => {
     }
   };
 
+  const sendTestWindow = async (blob: Blob, winIdx: number, isFinal: boolean) => {
+    setIsTranscribing(true);
+    const reader = new FileReader();
+    reader.readAsDataURL(blob);
+    reader.onloadend = async () => {
+      const base64 = (reader.result as string)?.split(',')[1] || '';
+      if (!base64) return;
+
+      actionLogger.info('voice', `Тест микрофона: отправка окна #${winIdx} (${blob.size} байт, 16кГц WAV)...`, {
+        streamId: streamIdRef.current,
+        windowIndex: winIdx,
+        isFinal
+      });
+
+      try {
+        const res = await fetch('/api/stt/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            streamId: streamIdRef.current,
+            windowIndex: winIdx,
+            isWindowEnd: true,
+            base64Audio: base64,
+            isFinal,
+            language: config.language || 'ru',
+            modelFile: config.modelFile
+          })
+        });
+        const data = await res.json();
+        if (data.status === 'skipped_silence') {
+          setTestWindows(prev => prev.map(w => w.index === winIdx ? {
+            ...w,
+            status: 'skipped_silence',
+            text: '(тишина пропущена — whisper сэкономлен)'
+          } : w));
+        } else if (data.text) {
+          receivedWindowsRef.current.set(winIdx, data.text.trim());
+          setTestWindows(prev => prev.map(w => w.index === winIdx ? {
+            ...w,
+            status: 'completed',
+            text: data.text.trim(),
+            durationSec: data.duration_sec
+          } : w));
+
+          const full = Array.from(receivedWindowsRef.current.entries())
+            .sort(([a], [b]) => a - b)
+            .map(([, t]) => t)
+            .join(' ');
+          setTestTranscript(full);
+        }
+      } catch (err: any) {
+        console.warn(`[Test Window #${winIdx}] transmission error:`, err);
+      } finally {
+        if (isFinal) {
+          setIsTranscribing(false);
+          setStreamStatusText('');
+        }
+      }
+    };
+  };
+
   const startVoiceTest = async () => {
     if (isRecording) {
       // Stop recording
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
+      if (vadRecorderRef.current) {
+        const { finalBlob, finalWindowIndex } = vadRecorderRef.current.stop();
+        if (finalBlob && finalWindowIndex !== undefined && finalBlob.size > 200) {
+          sendTestWindow(finalBlob, finalWindowIndex, true);
+        } else {
+          fetch('/api/stt/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              streamId: streamIdRef.current,
+              windowIndex: activeWindowIndex,
+              isWindowEnd: true,
+              base64Audio: 'AAAA',
+              isFinal: true
+            })
+          }).catch(() => {});
+        }
+        vadRecorderRef.current = null;
+      }
+      if (activeStream) {
+        activeStream.getTracks().forEach(t => t.stop());
+        setActiveStream(null);
       }
       setIsRecording(false);
+      setIsSpeaking(false);
+      actionLogger.info('voice', 'Тест микрофона: запись завершена, завершение очереди whisper.cpp...');
       return;
     }
 
     try {
-      audioChunksRef.current = [];
       const stream = await audioDevicesManager.getUserMediaWithDevice(selectedDeviceId);
       setActiveStream(stream);
 
-      const streamId = `test_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const streamId = `test_vad_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       streamIdRef.current = streamId;
-      chunkIndexRef.current = 0;
+      receivedWindowsRef.current.clear();
+      setTestWindows([{ index: 0, text: '', status: 'recording' }]);
+      setActiveWindowIndex(0);
       setStreamChunksSent(0);
-      setStreamStatusText('Инициализация аудиопотока...');
+      setTestTranscript(null);
+      setStreamStatusText(`VAD стрим: пауза >${config.vadPauseMs ?? 300}мс отправляет окно...`);
 
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-
-      actionLogger.info('voice', 'Старт проверки микрофона в настройках (режим стриминга)', {
+      actionLogger.info('voice', 'Старт проверки микрофона в настройках (VAD-окна, 16кГц WAV)', {
         streamId,
         deviceId: selectedDeviceId || 'default'
       });
 
-      mediaRecorder.ondataavailable = event => {
-        if (event.data && event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-          const currentChunkIdx = chunkIndexRef.current++;
-          setStreamChunksSent(currentChunkIdx + 1);
-
-          // Progressive slice with valid container headers
-          const cumulativeBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          const reader = new FileReader();
-          reader.readAsDataURL(cumulativeBlob);
-          reader.onloadend = async () => {
-            const base64 = (reader.result as string).split(',')[1] || '';
-            if (!base64) return;
-
-            actionLogger.info('voice', `Тест микрофона: отправка чанка #${currentChunkIdx} в whisper.cpp...`, {
-              streamId,
-              chunkIndex: currentChunkIdx,
-              sizeBytes: cumulativeBlob.size
+      const recorder = new VadAudioRecorder(
+        {
+          vadPauseMs: config.vadPauseMs ?? 300,
+          vadMinSpeechMs: config.vadMinSpeechMs ?? 350,
+          vadThreshold: config.vadThreshold ?? 0.025,
+          targetSampleRate: 16000
+        },
+        {
+          onVolumeLevel: (_rms, isVoice) => {
+            setIsSpeaking(isVoice);
+          },
+          onSpeechStart: (winIdx) => {
+            setActiveWindowIndex(winIdx);
+            setTestWindows(prev => {
+              if (prev.some(w => w.index === winIdx)) return prev;
+              return [...prev, { index: winIdx, text: '', status: 'recording' }];
             });
-
-            setStreamStatusText(`Стрим активен: отправлен чанк #${currentChunkIdx + 1}`);
-
-            try {
-              const res = await fetch('/api/stt/stream', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  streamId,
-                  chunkIndex: currentChunkIdx,
-                  base64Audio: base64,
-                  isFinal: false,
-                  language: config.language || 'ru',
-                  modelFile: config.modelFile
-                })
-              });
-              const data = await res.json();
-              if (data.text) {
-                setTestTranscript(data.text);
-                actionLogger.info('voice', `Тест микрофона: промежуточный текст [чанк #${currentChunkIdx}]: "${data.text}"`);
+            actionLogger.info('voice', `Тест микрофона: речь в окне #${winIdx}...`);
+          },
+          onSpeechPause: (winIdx, pauseMs) => {
+            // Silence pause detected
+          },
+          onWindowReady: (wavBlob, winIdx, rms, durationSec) => {
+            setStreamChunksSent(prev => prev + 1);
+            setTestWindows(prev => prev.map(w => w.index === winIdx ? {
+              ...w,
+              status: 'processing',
+              rms,
+              durationSec
+            } : w));
+            sendTestWindow(wavBlob, winIdx, false);
+          },
+          onWindowSkipped: (winIdx, reason) => {
+            setTestWindows(prev => {
+              if (!prev.some(w => w.index === winIdx)) {
+                return [...prev, { index: winIdx, text: '(тишина пропущена)', status: 'skipped_silence' }];
               }
-            } catch (err: any) {
-              console.warn('[VoiceSTTTab] Chunk error:', err);
-            }
-          };
+              return prev.map(w => w.index === winIdx ? {
+                ...w,
+                status: 'skipped_silence',
+                text: '(тишина пропущена)'
+              } : w);
+            });
+            actionLogger.info('voice', `Тест микрофона: окно #${winIdx} пропущено (${reason === 'silence' ? 'тишина' : 'короткий звук'})`);
+          }
         }
-      };
+      );
 
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        setActiveStream(null);
-        setIsRecording(false);
-        setIsTranscribing(true);
-        setStreamStatusText('Обработка финального аудиосегмента в whisper.cpp...');
-        actionLogger.info('voice', 'Тест микрофона: запись завершена, отправка финального стрим-запроса...', {
-          streamId: streamIdRef.current
-        });
+      await recorder.start(stream);
+      vadRecorderRef.current = recorder;
 
-        try {
-          const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          const reader = new FileReader();
-          reader.readAsDataURL(blob);
-          reader.onloadend = async () => {
-            try {
-              const base64 = (reader.result as string).split(',')[1] || '';
-              const res = await fetch('/api/stt/stream', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  streamId: streamIdRef.current,
-                  chunkIndex: chunkIndexRef.current++,
-                  base64Audio: base64,
-                  isFinal: true,
-                  language: config.language || 'ru',
-                  modelFile: config.modelFile
-                })
-              });
-              const data = await res.json();
-              setIsTranscribing(false);
-              setStreamStatusText('');
-              if (data.text) {
-                setTestTranscript(data.text);
-                actionLogger.success('voice', `Тест микрофона: whisper.cpp успешно распознал речь: "${data.text}"`, {
-                  duration_sec: data.duration_sec,
-                  confidence: data.confidence,
-                  source: data.source
-                });
-                soundEffects.playCompletionPing();
-              } else {
-                setTestTranscript('(Речь не распознана. Проверьте правильность выбранного микрофона и громкость)');
-                actionLogger.warn('voice', 'Тест микрофона: речь не распознана или была слишком тихой');
-              }
-            } catch (err: any) {
-              setIsTranscribing(false);
-              setStreamStatusText('');
-              setTestTranscript('(Ошибка вызова распознавания аудио)');
-              actionLogger.error('voice', `Тест микрофона: ошибка ответа бэкенда: ${err.message || err}`);
-            }
-          };
-        } catch (err: any) {
-          setIsTranscribing(false);
-          setStreamStatusText('');
-          setTestTranscript('(Ошибка распознавания аудио)');
-          actionLogger.error('voice', `Тест микрофона: ошибка ответа бэкенда: ${err.message || err}`);
-        }
-      };
-
-      // Start recording with 1000ms chunk intervals
-      mediaRecorder.start(1000);
       setIsRecording(true);
-      setTestTranscript(null);
       soundEffects.playToolCallCue();
     } catch (err: any) {
       setIsRecording(false);
@@ -478,13 +576,28 @@ export const VoiceSTTTab: React.FC = () => {
         )}
 
         {/* Status or Transcript Text Under the Button */}
-        <div className="min-h-[24px] max-w-md space-y-2">
+        <div className="min-h-[24px] w-full max-w-lg space-y-3">
           {isRecording && (
-            <div className="flex flex-col items-center gap-1">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--c-mint)]/20 border border-[var(--c-mint)]/40 text-[11px] font-mono text-[var(--c-mint-light)]">
-                <Radio className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
-                <span>Стрим в whisper.cpp: чанков отправлено {streamChunksSent}</span>
+            <div className="flex flex-col items-center gap-2">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-mono border transition-colors ${
+                    isSpeaking
+                      ? 'bg-red-500/20 border-red-500/50 text-red-400 animate-pulse'
+                      : 'bg-zinc-800/80 border-zinc-700 text-zinc-400'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${isSpeaking ? 'bg-red-500 animate-ping' : 'bg-zinc-500'}`} />
+                  <span>{isSpeaking ? 'Обнаружена речь' : 'Пауза (>300мс отправляет окно)'}</span>
+                  <span className="opacity-75 font-semibold">Окно #{activeWindowIndex}</span>
+                </div>
+
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--c-mint)]/20 border border-[var(--c-mint)]/40 text-[11px] font-mono text-[var(--c-mint-light)]">
+                  <Radio className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
+                  <span>Окон отправлено: {streamChunksSent}</span>
+                </div>
               </div>
+
               {streamStatusText && (
                 <span className="text-[10px] font-mono text-[var(--c-text-muted)]">
                   {streamStatusText}
@@ -493,26 +606,80 @@ export const VoiceSTTTab: React.FC = () => {
             </div>
           )}
 
-          {isTranscribing && (
+          {isTranscribing && !isRecording && (
             <div className="flex items-center justify-center gap-1.5 text-xs font-mono text-[var(--c-peach-light)]">
               <Activity className="w-3.5 h-3.5 animate-spin" />
               <span>{streamStatusText || 'Финальное распознавание аудио в whisper.cpp...'}</span>
             </div>
           )}
 
-          {testTranscript && (
-            <div className="p-2.5 rounded-lg border text-xs font-mono text-left animate-fadeIn" style={{ backgroundColor: 'var(--c-bg-tertiary)', borderColor: 'var(--c-border)', color: 'var(--c-text)' }}>
-              <div className="flex items-center justify-between text-[10px] text-[var(--c-text-dim)] mb-1 pb-1 border-b border-[var(--c-border)]">
-                <span>Результат STT:</span>
-                <span className="text-emerald-400">whisper.cpp</span>
+          {/* List of Decoded Windows in Real-time */}
+          {testWindows.length > 0 && (
+            <div className="space-y-1.5 text-left">
+              <div className="flex items-center justify-between text-[11px] font-medium px-1 text-[var(--c-text-muted)]">
+                <span>Сегменты речи (VAD-окна):</span>
+                <span className="text-[10px] text-[var(--c-text-dim)]">
+                  {testWindows.filter(w => w.status === 'completed').length} / {testWindows.length} распознано
+                </span>
               </div>
-              <p className="whitespace-pre-wrap">{testTranscript}</p>
+
+              <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                {testWindows.map(win => (
+                  <div
+                    key={win.index}
+                    className={`px-2.5 py-1.5 rounded-lg border text-xs font-mono flex items-start justify-between gap-2 transition-all ${
+                      win.status === 'completed'
+                        ? 'bg-[var(--c-bg-tertiary)] border-[var(--c-border)] text-[var(--c-text)]'
+                        : win.status === 'processing'
+                        ? 'bg-[var(--c-peach)]/10 border-[var(--c-peach)]/40 text-[var(--c-peach-light)] animate-pulse'
+                        : win.status === 'skipped_silence'
+                        ? 'bg-zinc-800/40 border-zinc-800 text-zinc-500'
+                        : 'bg-zinc-800/30 border-zinc-700/50 text-zinc-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-bold shrink-0">
+                        #{win.index}
+                      </span>
+                      <span className="break-all">
+                        {win.text || (win.status === 'processing' ? 'whisper.cpp обрабатывает...' : 'Запись сегмента...')}
+                      </span>
+                    </div>
+
+                    <div className="shrink-0 flex items-center gap-1.5 text-[10px]">
+                      {win.durationSec && (
+                        <span className="text-zinc-500 font-mono">{win.durationSec.toFixed(1)}с</span>
+                      )}
+                      {win.status === 'completed' ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : win.status === 'processing' ? (
+                        <Activity className="w-3.5 h-3.5 text-[var(--c-peach)] animate-spin" />
+                      ) : win.status === 'skipped_silence' ? (
+                        <span className="text-[9px] text-zinc-500">тишина</span>
+                      ) : (
+                        <Clock className="w-3 h-3 text-zinc-500" />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
-          {!isRecording && !isTranscribing && !testTranscript && (
+          {/* Full concatenated transcript */}
+          {testTranscript && (
+            <div className="p-3 rounded-xl border text-xs font-mono text-left animate-fadeIn shadow-xs" style={{ backgroundColor: 'var(--c-bg-tertiary)', borderColor: 'var(--c-border)', color: 'var(--c-text)' }}>
+              <div className="flex items-center justify-between text-[10px] text-[var(--c-text-dim)] mb-1 pb-1 border-b border-[var(--c-border)]">
+                <span className="font-semibold text-[var(--c-peach-light)]">Итоговый текст фразы:</span>
+                <span className="text-emerald-400">whisper.cpp 16kHz</span>
+              </div>
+              <p className="whitespace-pre-wrap leading-relaxed">{testTranscript}</p>
+            </div>
+          )}
+
+          {!isRecording && !isTranscribing && !testTranscript && testWindows.length === 0 && (
             <span className="text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
-              Нажмите кнопку микрофона для тестовой стрим-записи в whisper.cpp
+              Нажмите кнопку микрофона для тестовой стрим-записи по VAD-окнам в whisper.cpp
             </span>
           )}
         </div>
