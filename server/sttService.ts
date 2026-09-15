@@ -9,6 +9,9 @@ export interface STTConfig {
   enabled: boolean;
   useWebSpeechFallback: boolean;
   endpoint?: string;
+  vadPauseMs?: number;
+  vadMinSpeechMs?: number;
+  vadThreshold?: number;
 }
 
 let geminiClient: GoogleGenAI | null = null;
@@ -25,7 +28,10 @@ class STTService {
     modelFile: 'ggml-medium-q8_0.bin',
     language: 'ru',
     enabled: true,
-    useWebSpeechFallback: true
+    useWebSpeechFallback: true,
+    vadPauseMs: 300,
+    vadMinSpeechMs: 350,
+    vadThreshold: 0.03
   };
 
   private rabbitConnection: any = null;

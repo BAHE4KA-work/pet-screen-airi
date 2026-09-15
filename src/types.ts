@@ -214,6 +214,9 @@ export interface STTConfig {
   language: string;
   enabled: boolean;
   useWebSpeechFallback: boolean;
+  vadPauseMs?: number; // silence threshold in ms before sealing window (default: 300)
+  vadMinSpeechMs?: number; // minimum speech duration in ms before sealing window (default: 350)
+  vadThreshold?: number; // audio level RMS threshold (0.01 - 0.10, default: 0.03)
 }
 
 export interface ModelCluster {

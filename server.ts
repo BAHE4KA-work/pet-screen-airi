@@ -10,6 +10,7 @@ import { sttService } from './server/sttService';
 import { modelRouterService } from './server/modelRouter';
 import { localModelsManager } from './server/localModelsManager';
 import { localModelRuntime } from './server/localModelRuntime';
+import { sttStreamBufferManager } from './server/sttStreamBuffer';
 
 dotenv.config();
 
@@ -77,6 +78,7 @@ export function broadcastServerEvent(eventType: string, data: any) {
     }
   }
 }
+sttStreamBufferManager.setBroadcaster(broadcastServerEvent);
 
 // API: Server-Sent Events (SSE) for Real-Time Server Updates
 app.get(['/api/events', '/api/events/live'], (req, res) => {
@@ -479,20 +481,45 @@ app.post('/api/stt/transcribe', async (req, res) => {
 // API: Real-time Audio Stream Chunk for Whisper STT
 app.post('/api/stt/stream', async (req, res) => {
   try {
-    const { streamId, chunkIndex, base64Audio, isFinal, language, modelFile } = req.body;
+    const { streamId, chunkIndex, windowIndex, isWindowEnd, base64Audio, isFinal, language, modelFile } = req.body;
     if (!base64Audio) {
       res.status(400).json({ success: false, error: 'Параметр base64Audio отсутствует.' });
       return;
     }
 
     const buffer = Buffer.from(base64Audio, 'base64');
-    console.log(`[STT Stream] Stream ${streamId || 'default'} chunk #${chunkIndex ?? 0} (${buffer.length} bytes, final: ${Boolean(isFinal)})`);
+    const actualStreamId = streamId || 'default';
+    const effectiveWindowIndex = windowIndex ?? chunkIndex ?? 0;
+
+    console.log(`[STT Stream] Stream ${actualStreamId} window/chunk #${effectiveWindowIndex} (${buffer.length} bytes, windowEnd: ${Boolean(isWindowEnd)}, final: ${Boolean(isFinal)})`);
+
+    // If it's a VAD window (speech pause >= 300ms) or explicitly marked with windowIndex
+    if (isWindowEnd || windowIndex !== undefined) {
+      const queued = await sttStreamBufferManager.pushWindow({
+        streamId: actualStreamId,
+        windowIndex: effectiveWindowIndex,
+        audioBuffer: buffer,
+        isFinal: Boolean(isFinal),
+        language: language || 'ru',
+        modelFile
+      });
+
+      res.json({
+        success: true,
+        streamId: actualStreamId,
+        windowIndex: queued.windowIndex,
+        status: queued.status,
+        queueLength: queued.queueLength,
+        isFinal: Boolean(isFinal)
+      });
+      return;
+    }
 
     if (!isFinal) {
       // Intermediate chunk: acknowledge receipt immediately so CPU worker is not clogged
       broadcastServerEvent('stt_stream_chunk', {
-        streamId: streamId || 'default',
-        chunkIndex: chunkIndex ?? 0,
+        streamId: actualStreamId,
+        chunkIndex: effectiveWindowIndex,
         isFinal: false,
         bytes: buffer.length,
         status: 'recording'
@@ -500,8 +527,8 @@ app.post('/api/stt/stream', async (req, res) => {
 
       res.json({
         success: true,
-        streamId: streamId || 'default',
-        chunkIndex: chunkIndex ?? 0,
+        streamId: actualStreamId,
+        chunkIndex: effectiveWindowIndex,
         isFinal: false,
         text: ''
       });
@@ -510,7 +537,7 @@ app.post('/api/stt/stream', async (req, res) => {
 
     // Final audio segment: run Whisper speech-to-text
     broadcastServerEvent('stt_status', {
-      streamId: streamId || 'default',
+      streamId: actualStreamId,
       status: 'transcribing',
       message: 'whisper.cpp распознаёт речь...'
     });
@@ -518,30 +545,30 @@ app.post('/api/stt/stream', async (req, res) => {
     const result = await sttService.transcribeAudio(buffer, 'stream.webm');
 
     broadcastServerEvent('stt_stream_chunk', {
-      streamId: streamId || 'default',
-      chunkIndex: chunkIndex ?? 0,
+      streamId: actualStreamId,
+      chunkIndex: effectiveWindowIndex,
       isFinal: true,
       text: result.text || '',
       source: result.source
     });
 
     broadcastServerEvent('stt_result', {
-      streamId: streamId || 'default',
+      streamId: actualStreamId,
       text: result.text || '',
       isFinal: true,
       source: result.source
     });
 
     broadcastServerEvent('stt_status', {
-      streamId: streamId || 'default',
+      streamId: actualStreamId,
       status: 'completed',
       text: result.text || ''
     });
 
     res.json({
       success: true,
-      streamId: streamId || 'default',
-      chunkIndex: chunkIndex ?? 0,
+      streamId: actualStreamId,
+      chunkIndex: effectiveWindowIndex,
       isFinal: true,
       text: result.text || '',
       duration_sec: result.duration_sec,
@@ -553,6 +580,12 @@ app.post('/api/stt/stream', async (req, res) => {
     console.error('[STT Stream] Error processing audio chunk:', msg);
     res.status(500).json({ success: false, error: msg });
   }
+});
+
+// API: Check Stream Session Status
+app.get('/api/stt/stream/:streamId', (req, res) => {
+  const session = sttStreamBufferManager.getSessionState(req.params.streamId);
+  res.json(session || { status: 'not_found' });
 });
 
 // API: Multi-Model Routing Clusters

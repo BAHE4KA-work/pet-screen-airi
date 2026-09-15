@@ -360,6 +360,68 @@ export const VoiceSTTTab: React.FC = () => {
             </span>
           </div>
 
+          {/* VAD Sliding Pause Window Parameters */}
+          <div className="pt-2 border-t border-[var(--c-border)] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-[var(--c-peach-light)]">
+                VAD и стриминг окон по паузам:
+              </span>
+              <span className="text-[10px] text-[var(--c-text-dim)]">
+                Сегментация без обрезки слов
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="text-[10px] block mb-1" style={{ color: 'var(--c-text-muted)' }}>
+                  Пауза сброса окна (мс):
+                </label>
+                <Input
+                  id="stt-vad-pause-input"
+                  type="number"
+                  min={150}
+                  max={2000}
+                  step={50}
+                  value={config.vadPauseMs ?? 300}
+                  onChange={e => setConfig({ ...config, vadPauseMs: Number(e.target.value) || 300 })}
+                />
+                <span className="text-[9px] text-[var(--c-text-dim)]">По умолч. 300мс</span>
+              </div>
+
+              <div>
+                <label className="text-[10px] block mb-1" style={{ color: 'var(--c-text-muted)' }}>
+                  Мин. речь фразы (мс):
+                </label>
+                <Input
+                  id="stt-vad-speech-input"
+                  type="number"
+                  min={100}
+                  max={2000}
+                  step={50}
+                  value={config.vadMinSpeechMs ?? 350}
+                  onChange={e => setConfig({ ...config, vadMinSpeechMs: Number(e.target.value) || 350 })}
+                />
+                <span className="text-[9px] text-[var(--c-text-dim)]">Фильтр щелчков</span>
+              </div>
+
+              <div>
+                <label className="text-[10px] block mb-1" style={{ color: 'var(--c-text-muted)' }}>
+                  Порог VAD (RMS):
+                </label>
+                <Input
+                  id="stt-vad-thresh-input"
+                  type="number"
+                  min={0.01}
+                  max={0.2}
+                  step={0.005}
+                  value={config.vadThreshold ?? 0.03}
+                  onChange={e => setConfig({ ...config, vadThreshold: Number(e.target.value) || 0.03 })}
+                />
+                <span className="text-[9px] text-[var(--c-text-dim)]">Чувствительность</span>
+              </div>
+            </div>
+          </div>
+
           <div className="flex items-center justify-between pt-1">
             <label className="flex items-center gap-2 cursor-pointer select-none text-[11px]" style={{ color: 'var(--c-text-muted)' }}>
               <input
