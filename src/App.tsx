@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, Eye, EyeOff, Sparkles, Clock, Activity, Maximize2, Minimize2, Monitor, PanelBottom, GripVertical } from 'lucide-react';
+import { Settings, Eye, EyeOff, Sparkles, Clock, Activity, Maximize2, Minimize2, Monitor, PanelBottom, GripVertical, Ghost } from 'lucide-react';
 import { FloatingHud } from './components/FloatingHud';
 import { SettingsModal } from './components/SettingsModal';
 import { DesktopBackground } from './components/DesktopBackground';
@@ -54,17 +54,25 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState('tools');
 
   // Real Overlay & Window Mode Preferences
-  const isOverlayMode = electronBridge.isElectron();
+  const [isOverlayMode, setIsOverlayMode] = useState<boolean>(() => {
+    return electronBridge.isElectron() || tauriBridge.isTauri() || (typeof window !== 'undefined' && window.location.search.includes('mode=overlay'));
+  });
   const [windowMode, setWindowMode] = useState<'borderless' | 'fullscreen'>('borderless');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [desktopOpacity, setDesktopOpacity] = useState(0.4);
-  // In Electron overlay mode, disable fake desktop background so real host screen is seen
-  const [showDesktop, setShowDesktop] = useState(!isOverlayMode);
-  const [showSimulatedMockup, setShowSimulatedMockup] = useState(false);
-  const [isTaskbarVisible, setIsTaskbarVisible] = useState<boolean>(() => {
-    const saved = localStorage.getItem('overlay_taskbar_visible');
+  // In native overlay mode (Tauri or Electron), disable fake desktop background so real host screen is seen
+  const [showDesktop, setShowDesktop] = useState<boolean>(() => {
+    const isDesktop = electronBridge.isElectron() || tauriBridge.isTauri() || (typeof window !== 'undefined' && window.location.search.includes('mode=overlay'));
+    if (isDesktop) return false;
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('overlay_show_desktop') : null;
     return saved !== null ? saved === 'true' : true;
   });
+  const [showSimulatedMockup, setShowSimulatedMockup] = useState(false);
+  const [isTaskbarVisible, setIsTaskbarVisible] = useState<boolean>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('overlay_taskbar_visible') : null;
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [isGhostMode, setIsGhostMode] = useState(false);
 
   // Draggable and Corner-Sticky Dock Controls
   type CornerPosition = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
@@ -189,28 +197,40 @@ export default function App() {
 
   // Set transparency class on document for overlay mode
   useEffect(() => {
-    if (isOverlayMode) {
-      document.documentElement.classList.add('is-overlay-mode');
-      document.body.classList.add('is-overlay-transparent');
-    }
-  }, [isOverlayMode]);
+    const checkOverlay = () => {
+      const isOverlay = electronBridge.isElectron() || tauriBridge.isTauri() || window.location.search.includes('mode=overlay');
+      setIsOverlayMode(isOverlay);
+      if (isOverlay) {
+        document.documentElement.classList.add('is-overlay-mode');
+        document.body.classList.add('is-overlay-transparent');
+      }
+    };
+    checkOverlay();
+    const t = setTimeout(checkOverlay, 150);
+    return () => clearTimeout(t);
+  }, []);
 
-  // Dynamic Electron & Tauri hardware click-through / interactivity management
+  // Hardware Click-Through and Focus handling for Tauri
   useEffect(() => {
-    const isDesktopEnv = electronBridge.isElectron() || tauriBridge.isTauri();
-    if (!isDesktopEnv) return;
+    if (tauriBridge.isTauri()) {
+      // In Tauri: window is fully interactive by default so user can click, drag, and interact with all elements.
+      // Click-through is only engaged if user explicitly enabled Ghost Mode, or if the entire HUD and all windows are hidden.
+      const shouldIgnore = isGhostMode || (!hudVisible && views.length === 0 && !settingsOpen && !isTaskbarVisible);
+      tauriBridge.setClickThrough(shouldIgnore);
+    }
+  }, [isGhostMode, hudVisible, views.length, settingsOpen, isTaskbarVisible]);
+
+  // Dynamic Electron hardware click-through / interactivity management
+  // ONLY for Electron (because Electron's setIgnoreMouseEvents with { forward: true } passes mousemove back to renderer)
+  useEffect(() => {
+    if (!electronBridge.isElectron()) return;
 
     let isInteractiveCurrent: boolean | null = null;
 
     const setInteractivity = (shouldBeInteractive: boolean) => {
       if (shouldBeInteractive !== isInteractiveCurrent) {
         isInteractiveCurrent = shouldBeInteractive;
-        if (electronBridge.isElectron()) {
-          electronBridge.setInteractive(shouldBeInteractive);
-        }
-        if (tauriBridge.isTauri()) {
-          tauriBridge.setClickThrough(!shouldBeInteractive);
-        }
+        electronBridge.setInteractive(shouldBeInteractive);
       }
     };
 
@@ -236,6 +256,7 @@ export default function App() {
         target.closest('#corner-dock-controls') ||
         target.closest('#settings-modal-window') ||
         target.closest('#summon-hud-eye-btn') ||
+        target.closest('#taskbar-panel') ||
         target.closest('button, input, textarea, a, select, [role="button"]') ||
         target.dataset.interactive === 'true' ||
         target.getAttribute('data-interactive') === 'true'
@@ -256,7 +277,8 @@ export default function App() {
         target.closest('#floating-hud-window') ||
         target.closest('.view-window') ||
         target.closest('#settings-modal-window') ||
-        target.closest('#corner-dock-controls')
+        target.closest('#corner-dock-controls') ||
+        target.closest('#taskbar-panel')
       );
       const isNearTaskbarEdge = clientY >= window.innerHeight - 24 && !isInsideInteractiveWindow;
 
@@ -614,7 +636,20 @@ export default function App() {
       }
 
       // 4. Quick actions
-      if (hotkeyManager.matches('toggle_model', e)) {
+      if (hotkeyManager.matches('toggle_ghost_mode', e) || (e.altKey && e.key.toLowerCase() === 'g')) {
+        e.preventDefault();
+        setIsGhostMode(prev => {
+          const next = !prev;
+          if (next) {
+            soundEffects.playWarningCue();
+            actionLogger.info('ui', 'Сквозной режим (Ghost Mode) включен по горячей клавише Alt+G');
+          } else {
+            soundEffects.playCompletionPing();
+            actionLogger.info('ui', 'Сквозной режим выключен по горячей клавише Alt+G. Оверлей интерактивен.');
+          }
+          return next;
+        });
+      } else if (hotkeyManager.matches('toggle_model', e)) {
         e.preventDefault();
         handleToggleModel();
       } else if (hotkeyManager.matches('ignore_conflict', e)) {
@@ -799,6 +834,34 @@ export default function App() {
             <Clock className="w-4 h-4" />
           </button>
 
+          {/* Ghost Mode / Click-through Mode Toggle */}
+          <button
+            id="dock-ghost-mode-btn"
+            onClick={() => {
+              const next = !isGhostMode;
+              setIsGhostMode(next);
+              if (next) {
+                soundEffects.playWarningCue();
+                actionLogger.info('ui', 'Сквозной режим (Ghost Mode) включен. Клики проходят сквозь оверлей.');
+              } else {
+                soundEffects.playCompletionPing();
+                actionLogger.info('ui', 'Сквозной режим выключен. Полная интерактивность оверлея активна.');
+              }
+            }}
+            className={`p-2 rounded-lg transition-colors ${
+              isGhostMode
+                ? 'text-amber-400 bg-amber-500/20 ring-1 ring-amber-400/50'
+                : 'text-[var(--c-text-muted)] hover:text-[var(--c-peach)]'
+            }`}
+            title={
+              isGhostMode
+                ? 'Сквозной режим (Ghost Mode) активен: клики проходят сквозь окно к приложениям Windows (Alt+G)'
+                : 'Включить сквозной режим (Ghost Mode): клики будут проходить сквозь оверлей (Alt+G)'
+            }
+          >
+            <Ghost className="w-4 h-4" />
+          </button>
+
           <button
             onClick={() => setHudVisible(false)}
             className="p-2 rounded-lg text-[var(--c-text-muted)] hover:text-[var(--c-peach)] transition-colors"
@@ -815,6 +878,23 @@ export default function App() {
             <Settings className="w-4 h-4" />
           </button>
         </aside>
+      )}
+
+      {/* Discreet floating summon button when HUD is hidden */}
+      {!hudVisible && (
+        <button
+          id="summon-hud-eye-btn"
+          data-interactive="true"
+          onClick={() => {
+            setHudVisible(true);
+            soundEffects.playCompletionPing();
+            actionLogger.info('ui', 'HUD оверлей вызван по кнопке');
+          }}
+          className="interactive-ui fixed top-4 right-4 z-50 p-2.5 rounded-full bg-[var(--c-bg-secondary)]/90 border border-[var(--c-peach-border)] text-[var(--c-peach)] shadow-xl hover:scale-105 hover:bg-[var(--c-peach-surface)] transition-all cursor-pointer"
+          title="Показать HUD оверлей (Alt + Space)"
+        >
+          <Eye className="w-4 h-4" />
+        </button>
       )}
 
       {/* Separate Settings & Info Window */}

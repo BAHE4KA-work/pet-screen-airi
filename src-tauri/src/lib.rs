@@ -35,6 +35,16 @@ pub fn run() {
             commands::modules::save_module_ini,
         ])
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_ignore_cursor_events(false);
+                let _ = window.set_focus();
+                if let Ok(Some(monitor)) = window.current_monitor() {
+                    let size = monitor.size();
+                    let _ = window.set_size(tauri::Size::Physical(size.clone()));
+                    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: 0, y: 0 }));
+                }
+            }
+
             // Setup System Tray
             let toggle_item = MenuItem::with_id(app, "toggle", "Показать/Скрыть HUD", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Выход из оверлея", true, None::<&str>)?;

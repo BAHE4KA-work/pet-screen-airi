@@ -4,7 +4,13 @@
  */
 
 export const isTauri = (): boolean => {
-  return typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__);
+  if (typeof window === 'undefined') return false;
+  return Boolean(
+    (window as any).__TAURI_INTERNALS__ ||
+    (window as any).__TAURI__ ||
+    (window as any).__TAURI_METADATA__ ||
+    window.location.search.includes('mode=tauri')
+  );
 };
 
 export interface TauriSystemMetrics {

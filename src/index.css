@@ -28,23 +28,27 @@
 }
 
 @layer base {
-  html, body {
+  html, body, #root {
     margin: 0;
     padding: 0;
     width: 100%;
     height: 100%;
+    background-color: transparent !important;
+    background: transparent !important;
   }
 
   body {
-    background-color: var(--c-bg-primary);
     color: var(--c-text);
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', system-ui, sans-serif;
     overflow: hidden;
     user-select: none;
+    -webkit-user-select: none;
+    background-color: transparent !important;
+    background: transparent !important;
   }
 }
 
-/* Transparent overlay rules: When running inside Electron or with overlay mode flag */
+/* Transparent overlay rules */
 html.is-overlay-mode,
 html.is-overlay-mode body,
 html.is-overlay-mode #root,
@@ -54,14 +58,21 @@ body.is-overlay-transparent,
   background: transparent !important;
 }
 
-/* Interactive elements explicitly capture pointer events */
+/* Ensure all interactive controls capture pointer events and clicks reliably */
+button,
+input,
+textarea,
+select,
+a,
+[role="button"],
 [data-interactive="true"],
 .interactive-ui,
 .view-window,
 #floating-hud-window,
 #corner-dock-controls,
 #settings-modal-window,
-#summon-hud-eye-btn {
+#summon-hud-eye-btn,
+#taskbar-panel {
   pointer-events: auto !important;
 }
 

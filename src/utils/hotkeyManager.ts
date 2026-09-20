@@ -41,6 +41,12 @@ export const DEFAULT_HOTKEYS: HotkeyItem[] = [
     label: 'Голосовой ввод (STT)',
     keys: 'Ctrl+Space',
     description: 'Включение распознавания речи с микрофона'
+  },
+  {
+    id: 'toggle_ghost_mode',
+    label: 'Сквозной клик (Ghost mode)',
+    keys: 'Alt+G',
+    description: 'Включение или отключение сквозных кликов сквозь оверлей'
   }
 ];
 

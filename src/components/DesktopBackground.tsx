@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Monitor, Video, VideoOff, Maximize2, ShieldCheck, Cpu, Activity } from 'lucide-react';
 import { electronBridge } from '../utils/electronBridge';
+import { tauriBridge } from '../services/tauriBridge';
 
 interface DesktopBackgroundProps {
   opacity: number;
@@ -11,7 +12,7 @@ export const DesktopBackground: React.FC<DesktopBackgroundProps> = ({
   opacity,
   showSimulatedMockup = false
 }) => {
-  const isOverlay = electronBridge.isElectron();
+  const isOverlay = electronBridge.isElectron() || tauriBridge.isTauri() || (typeof window !== 'undefined' && window.location.search.includes('mode=overlay'));
   const [isScreenMirroring, setIsScreenMirroring] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);

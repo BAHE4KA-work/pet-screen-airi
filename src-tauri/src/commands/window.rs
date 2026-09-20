@@ -15,6 +15,7 @@ pub fn toggle_window_visibility(window: WebviewWindow) -> Result<bool, String> {
         Ok(false)
     } else {
         window.show().map_err(|e| e.to_string())?;
+        let _ = window.set_ignore_cursor_events(false);
         window.set_focus().map_err(|e| e.to_string())?;
         Ok(true)
     }
