@@ -13,10 +13,13 @@ class Settings(BaseSettings):
     QUEUE_LLM_OUTBOUND: str = "overlay.tasks.llm.outbound"
     QUEUE_STT_INBOUND: str = "overlay.tasks.stt.inbound"
     QUEUE_STT_OUTBOUND: str = "overlay.tasks.stt.outbound"
+    QUEUE_TTS_INBOUND: str = "overlay.tasks.tts.inbound"
+    QUEUE_TTS_OUTBOUND: str = "overlay.tasks.tts.outbound"
     QUEUE_EVENTS_BROADCAST: str = "overlay.events.broadcast"
     
     # Defaults
     DEFAULT_LLM_MODEL: str = "functiongemma-7b-tools-v2.1.Q4_K_M.gguf"
     DEFAULT_STT_MODEL: str = "ggml-medium-q8_0.bin"
+    DEFAULT_TTS_MODEL: str = "kokoro-ru-v0_19.onnx"
 
 settings = Settings()

@@ -219,6 +219,23 @@ export interface STTConfig {
   vadThreshold?: number; // audio level RMS threshold (0.01 - 0.10, default: 0.03)
 }
 
+export interface TTSVoiceOption {
+  id: string;
+  name: string;
+  gender: 'female' | 'male';
+  isFlagship?: boolean;
+  description: string;
+}
+
+export interface TTSConfig {
+  model: string;
+  modelFile: string;
+  voice: 'sveta' | 'masha' | 'dima' | string;
+  speed: number;
+  autoSpeak: boolean;
+  volume: number;
+}
+
 export interface ModelCluster {
   id: string;
   name: string;
@@ -241,6 +258,7 @@ export interface AppSettings {
   showSimulatedDesktop: boolean;
   storagePath: string;
   sttConfig: STTConfig;
+  ttsConfig?: TTSConfig;
 }
 
 export type ModelCategoryKey = 'basemodel' | 'stt' | 'tts' | 'embedding' | string;

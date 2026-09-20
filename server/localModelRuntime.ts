@@ -14,7 +14,7 @@ const CATEGORY_CONTAINER_MAP: Record<string, string> = {
 const CATEGORY_ARCH_MAP: Record<string, string> = {
   basemodel: 'FunctionGemma / Llama (GGUF)',
   stt: 'Whisper GGML / Bin (Faster-Whisper)',
-  tts: 'Piper TTS / ONNX',
+  tts: 'Kokoro-82M (zaakirio/kokoro-ru) / ONNX',
   embedding: 'BGE / ONNX'
 };
 

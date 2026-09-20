@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f111a"/>
+      <stop offset="50%" stop-color="#181b2a"/>
+      <stop offset="100%" stop-color="#090b10"/>
+    </linearGradient>
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="peachGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f43f5e"/>
+      <stop offset="50%" stop-color="#fb923c"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c084fc"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="16" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background with smooth rounded corners -->
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#bgGrad)" stroke="#38bdf8" stroke-opacity="0.3" stroke-width="8"/>
+
+  <!-- Outer HUD Ring and Ticks -->
+  <circle cx="512" cy="512" r="380" fill="none" stroke="#334155" stroke-width="6" stroke-dasharray="16 12"/>
+  <circle cx="512" cy="512" r="340" fill="none" stroke="url(#purpleGrad)" stroke-width="4" stroke-opacity="0.4"/>
+  
+  <!-- Cyber Hexagon Frame -->
+  <polygon points="512,192 788,352 788,672 512,832 236,672 236,352" 
+           fill="#1e293b" fill-opacity="0.5" 
+           stroke="url(#cyanGrad)" stroke-width="12" 
+           filter="url(#glow)"/>
+
+  <!-- HUD Reticle Corners -->
+  <path d="M 330,370 L 330,310 L 390,310" fill="none" stroke="#38bdf8" stroke-width="10" stroke-linecap="round"/>
+  <path d="M 694,370 L 694,310 L 634,310" fill="none" stroke="#38bdf8" stroke-width="10" stroke-linecap="round"/>
+  <path d="M 330,654 L 330,714 L 390,714" fill="none" stroke="#38bdf8" stroke-width="10" stroke-linecap="round"/>
+  <path d="M 694,654 L 694,714 L 634,714" fill="none" stroke="#38bdf8" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- Inner Core Rings -->
+  <circle cx="512" cy="512" r="180" fill="none" stroke="url(#peachGrad)" stroke-width="10" stroke-dasharray="80 30" stroke-linecap="round"/>
+  <circle cx="512" cy="512" r="120" fill="#0f172a" stroke="#38bdf8" stroke-width="8"/>
+  
+  <!-- Central AI Spark / Star -->
+  <path d="M 512,430 L 535,490 L 594,512 L 535,534 L 512,594 L 489,534 L 430,512 L 489,490 Z" 
+        fill="url(#cyanGrad)" filter="url(#glow)"/>
+  <circle cx="512" cy="512" r="18" fill="#ffffff"/>
+
+  <!-- Dynamic Orbit Points -->
+  <circle cx="512" cy="250" r="12" fill="#38bdf8" filter="url(#glow)"/>
+  <circle cx="740" cy="512" r="12" fill="#fb923c" filter="url(#glow)"/>
+  <circle cx="512" cy="774" r="12" fill="#c084fc" filter="url(#glow)"/>
+  <circle cx="284" cy="512" r="12" fill="#38bdf8" filter="url(#glow)"/>
+</svg>

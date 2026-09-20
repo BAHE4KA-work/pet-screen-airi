@@ -11,6 +11,7 @@ import { modelRouterService } from './server/modelRouter';
 import { localModelsManager } from './server/localModelsManager';
 import { localModelRuntime } from './server/localModelRuntime';
 import { sttStreamBufferManager } from './server/sttStreamBuffer';
+import { ttsService } from './server/ttsService';
 
 dotenv.config();
 
@@ -97,6 +98,7 @@ app.get(['/api/events', '/api/events/live'], (req, res) => {
       gateway: { status: 'online', port: 3000 },
       llmWorker: { status: 'online', engine: 'llama-cpp / transformers (Python)' },
       voiceWorker: { status: 'online', engine: 'faster-whisper (Python)' },
+      ttsWorker: { status: 'online', engine: 'zaakirio/kokoro-ru (82M ONNX)', voices: ['sveta', 'masha', 'dima'] },
       rabbitmq: { status: 'connected' },
       postgres: { status: 'ready', vectorSupport: true }
     },
@@ -588,6 +590,61 @@ app.get('/api/stt/stream/:streamId', (req, res) => {
   res.json(session || { status: 'not_found' });
 });
 
+// API: TTS Configuration & zaakirio/kokoro-ru Voices
+app.get('/api/tts/config', (req, res) => {
+  res.json(ttsService.getConfig());
+});
+
+app.post('/api/tts/config', (req, res) => {
+  ttsService.setConfig(req.body);
+  res.json({ success: true, config: ttsService.getConfig() });
+});
+
+app.get('/api/tts/voices', (req, res) => {
+  res.json({
+    model: 'zaakirio/kokoro-ru',
+    architecture: 'Kokoro-82M (Russian TTS)',
+    voices: ttsService.voices,
+    activeVoice: ttsService.getConfig().activeVoice
+  });
+});
+
+// API: Synthesize Russian Speech via zaakirio/kokoro-ru
+app.post('/api/tts/synthesize', async (req, res) => {
+  const { text, voice, speed, sampleRate } = req.body;
+  if (!text || typeof text !== 'string') {
+    res.status(400).json({ error: 'Укажите текст для синтеза речи.' });
+    return;
+  }
+
+  try {
+    broadcastServerEvent('tts_start', {
+      text: text.slice(0, 50),
+      voice: voice || ttsService.getConfig().activeVoice,
+      model: 'zaakirio/kokoro-ru'
+    });
+
+    const result = await ttsService.synthesize({ text, voice, speed, sampleRate });
+
+    broadcastServerEvent('tts_result', {
+      voice: result.voice,
+      durationSec: result.durationSec,
+      latencyMs: result.latencyMs,
+      rtf: result.rtf,
+      charCount: result.charCount
+    });
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[TTS Synthesize] Error:', msg);
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
 // API: Multi-Model Routing Clusters
 app.get('/api/models/clusters', (req, res) => {
   res.json({
@@ -636,6 +693,11 @@ app.post('/api/models/local/select', (req, res) => {
   // If STT model changed, sync with sttService
   if (category === 'stt') {
     sttService.setConfig({ modelFile: model, model });
+  }
+
+  // If TTS model changed, sync with ttsService
+  if (category === 'tts') {
+    ttsService.setConfig({ modelFile: model });
   }
 
   res.json({ success: true, ...result, overview: localModelsManager.scanModels() });

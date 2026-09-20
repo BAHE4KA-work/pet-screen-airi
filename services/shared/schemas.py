@@ -67,6 +67,23 @@ class ModelRuntimeStatus(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class SSEEventPayload(BaseModel):
-    type: str # "MODEL_STATUS", "DEBUG_LOG", "AUDIO_VOLUME", "CONTAINER_HEALTH", "INFERENCE_STREAM"
+    type: str # "MODEL_STATUS", "DEBUG_LOG", "AUDIO_VOLUME", "CONTAINER_HEALTH", "INFERENCE_STREAM", "TTS_RESULT"
     data: Dict[str, Any]
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+class TTSInferenceRequest(BaseMessage):
+    text: str
+    voice: str = "sveta" # "sveta" (flagship female), "masha" (female), "dima" (male)
+    speed: float = 1.0
+    model_name: str = "zaakirio/kokoro-ru"
+    model_file: Optional[str] = "kokoro-ru-v0_19.onnx"
+    output_format: str = "wav"
+
+class TTSInferenceResponse(BaseMessage):
+    audio_base64: str
+    sample_rate: int = 24000
+    duration_sec: float
+    voice: str
+    model_ident: str = "zaakirio/kokoro-ru"
+    rtf: float = 0.102
+    source: str = "voice_worker"

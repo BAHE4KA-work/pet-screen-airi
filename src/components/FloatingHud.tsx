@@ -15,7 +15,9 @@ import {
   CornerDownLeft,
   Cpu,
   ChevronDown,
-  Activity
+  Activity,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { ModelStatus, ViewSpec, STTConfig } from '../types';
 import { soundEffects } from '../utils/audioEffects';
@@ -25,6 +27,7 @@ import { audioDevicesManager, AudioDeviceOption } from '../utils/audioDevices';
 import { actionLogger } from '../utils/actionLogger';
 import { AudioVolumeVisualizer } from './ui/AudioVolumeVisualizer';
 import { VadAudioRecorder } from '../utils/audioPcmRecorder';
+import { ttsClient, TTSState } from '../services/ttsClient';
 
 interface FloatingHudProps {
   status: ModelStatus | null;
@@ -79,6 +82,7 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
   const [activeWindowIndex, setActiveWindowIndex] = useState(1);
   const [sentWindowsCount, setSentWindowsCount] = useState(0);
   const [completedWindowsCount, setCompletedWindowsCount] = useState(0);
+  const [ttsState, setTtsState] = useState<TTSState>(ttsClient.getState());
   const [sttConfig, setSttConfig] = useState<STTConfig>({
     endpoint: 'http://localhost:8000/v1/audio/transcriptions',
     model: 'whisper-base-ru.bin',
@@ -258,6 +262,14 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
     };
   }, []);
 
+  // Subscribe to TTS changes (zaakirio/kokoro-ru)
+  useEffect(() => {
+    const unsub = ttsClient.subscribe((state) => {
+      setTtsState(state);
+    });
+    return unsub;
+  }, []);
+
   // Load available microphones
   useEffect(() => {
     const loadMics = async () => {
@@ -435,11 +447,20 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
               if (data.views && Array.isArray(data.views) && onSpawnView) {
                 data.views.forEach((v: ViewSpec) => onSpawnView(v));
               }
+              // Auto-speak result text via Kokoro-RU if enabled
+              const speakable = data.message || data.view?.title || data.output;
+              if (speakable && typeof speakable === 'string' && ttsClient.getState().autoSpeak) {
+                ttsClient.speak(speakable);
+              }
               // Clear prompt on successful tool execution into view
               setPrompt('');
             } else if (event === 'no_tool') {
               actionLogger.warn('llm', 'Модель не нашла подходящего инструмента для запроса', data);
-              setErrorData(data.message || 'Модель не смогла подобрать инструмент для этого запроса.');
+              const msg = data.message || 'Модель не смогла подобрать инструмент для этого запроса.';
+              setErrorData(msg);
+              if (ttsClient.getState().autoSpeak) {
+                ttsClient.speak(msg);
+              }
               receivedFinal = true;
               soundEffects.playWarningCue();
             } else if (event === 'error') {
@@ -756,6 +777,33 @@ export const FloatingHud: React.FC<FloatingHudProps> = ({
                 <Pin className={`w-3.5 h-3.5 ${isPinned ? 'fill-[var(--c-peach)] rotate-45' : ''}`} />
               </button>
             )}
+
+            {/* Kokoro-RU TTS Action */}
+            <button
+              id="hud-tts-toggle-btn"
+              type="button"
+              onClick={() => {
+                if (ttsState.isSpeaking) {
+                  ttsClient.stop();
+                } else if (prompt.trim()) {
+                  ttsClient.speak(prompt.trim());
+                } else {
+                  onOpenSettings('tts');
+                }
+              }}
+              className={`p-1 rounded-md transition-colors flex items-center gap-1 ${
+                ttsState.isSpeaking
+                  ? 'text-sky-400 bg-sky-500/20 ring-1 ring-sky-400/40 animate-pulse'
+                  : 'text-[var(--c-text-muted)] hover:text-sky-400 hover:bg-white/5'
+              }`}
+              title={`Синтез речи Kokoro-RU (${ttsState.currentVoice}) - ${ttsState.isSpeaking ? 'Остановить речь' : 'Озвучить / Настройки'}`}
+            >
+              {ttsState.isSpeaking ? (
+                <VolumeX className="w-3.5 h-3.5 text-sky-400" />
+              ) : (
+                <Volume2 className="w-3.5 h-3.5" />
+              )}
+            </button>
 
             <button
               onClick={() => onOpenSettings()}

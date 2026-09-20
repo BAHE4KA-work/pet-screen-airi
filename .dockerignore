@@ -4,3 +4,16 @@ dist
 .env
 storage
 *.log
+models
+models/*
+target
+src-tauri/target
+*.bin
+*.gguf
+*.onnx
+*.safetensors
+*.pt
+.cache
+.npm
+postgres-data
+rabbitmq-data

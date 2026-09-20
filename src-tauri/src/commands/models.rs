@@ -77,7 +77,7 @@ pub async fn scan_local_models() -> Result<ModelsOverview, String> {
     let cat_defs = vec![
         ("basemodel", "LLM Worker (FunctionGemma / Llama)", "GGUF/Bin модели для рассуждений и тулчейна", vec![".gguf", ".bin"]),
         ("stt", "Voice Worker (Whisper STT)", "GGML/Bin веса для распознавания русской речи", vec![".bin", ".gguf", ".onnx"]),
-        ("tts", "TTS Worker (Piper TTS)", "ONNX голоса синтеза речи", vec![".onnx"]),
+        ("tts", "TTS Worker (zaakirio/kokoro-ru)", "Kokoro-82M ONNX русские голоса (Sveta, Masha, Dima)", vec![".onnx", ".safetensors", ".bin"]),
         ("embedding", "Vector RAG Worker", "ONNX / BGE модели текстовых эмбеддингов", vec![".onnx", ".safetensors"]),
     ];
 

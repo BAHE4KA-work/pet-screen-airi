@@ -36,6 +36,7 @@ import { FineTuningExportModal } from './settings/FineTuningExportModal';
 import { StorageSettingsTab } from './settings/StorageSettingsTab';
 import { ModelRouterTab } from './settings/ModelRouterTab';
 import { VoiceSTTTab } from './settings/VoiceSTTTab';
+import { VoiceTTSTab } from './settings/VoiceTTSTab';
 import { NetworkSettingsTab } from './settings/NetworkSettingsTab';
 import { LocalModelsTab } from './settings/LocalModelsTab';
 import { HotkeysTab } from './settings/HotkeysTab';
@@ -197,6 +198,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: 'storage', label: 'Хранилище', icon: HardDrive },
     { id: 'routing', label: 'Маршрутизация', icon: Network },
     { id: 'voice', label: 'Голосовой ввод (STT)', icon: Mic },
+    { id: 'tts', label: 'Синтез речи (TTS)', icon: Volume2 },
     { id: 'compatibility', label: 'Совместимость', icon: ShieldCheck, badge: hasConflict && !isIgnored },
     { id: 'history', label: 'История', icon: History },
     { id: 'network', label: 'Сеть', icon: Globe },
@@ -914,6 +916,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             {/* VOICE STT TAB */}
             {activeTab === 'voice' && <VoiceSTTTab />}
+
+            {/* VOICE TTS TAB */}
+            {activeTab === 'tts' && <VoiceTTSTab />}
 
             {/* NETWORK TAB */}
             {activeTab === 'network' && <NetworkSettingsTab />}
