@@ -11,3 +11,5 @@ coverage/
 *.safetensor
 models/*.bin
 models
+
+src-tauri/target/
