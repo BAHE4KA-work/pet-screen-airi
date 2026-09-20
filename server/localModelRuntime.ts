@@ -152,6 +152,18 @@ class LocalModelRuntime {
     return loaded;
   }
 
+  public isCategoryLoaded(category: string = 'tts'): boolean {
+    return Boolean(this.categoryRuntimes.get(category)?.state.isLoaded);
+  }
+
+  public getCategoryState(category: string = 'tts'): ModelRuntimeState {
+    return this.getState(category);
+  }
+
+  public getCategoryBuffers(category: string = 'tts'): Buffer[] {
+    return this.categoryRuntimes.get(category)?.buffers || [];
+  }
+
   public getState(category: string = 'basemodel'): ModelRuntimeState {
     this.refreshCategoryState(category);
     const runtime = this.initCategory(category);

@@ -94,7 +94,37 @@ services:
       - overlay-net
 
   # ==========================================================
-  # 4. MESSAGE BROKER (RABBITMQ)
+  # 4. DEDICATED TEXT-TO-SPEECH WORKER (Kokoro-RU .pth PyTorch)
+  # ==========================================================
+  tts-service:
+    build:
+      context: .
+      dockerfile: services/tts_worker/Dockerfile
+      args:
+        - HTTP_PROXY
+        - HTTPS_PROXY
+        - NO_PROXY
+        - DEBIAN_MIRROR
+    container_name: overlay-tts-worker
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - MODELS_PATH=/models
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./models:/models:ro
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - overlay-net
+
+  # ==========================================================
+  # 5. MESSAGE BROKER (RABBITMQ)
   # ==========================================================
   rabbitmq:
     image: rabbitmq:3-management-alpine

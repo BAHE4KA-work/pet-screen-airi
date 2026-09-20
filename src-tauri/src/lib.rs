@@ -10,6 +10,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager,
 };
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -44,6 +45,32 @@ pub fn run() {
                     let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: 0, y: 0 }));
                 }
             }
+
+            // Register Global OS Shortcuts: Alt+Space (Summon/Toggle HUD), Alt+T (Toggle Taskbar), Alt+G (Ghost Mode)
+            let _ = app.global_shortcut().on_shortcut("Alt+Space", |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.emit("global-hotkey-toggle-hud", ());
+                        let _ = window.set_focus();
+                    }
+                }
+            });
+
+            let _ = app.global_shortcut().on_shortcut("Alt+T", |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.emit("global-hotkey-toggle-taskbar", ());
+                    }
+                }
+            });
+
+            let _ = app.global_shortcut().on_shortcut("Alt+G", |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.emit("global-hotkey-toggle-ghost", ());
+                    }
+                }
+            });
 
             // Setup System Tray
             let toggle_item = MenuItem::with_id(app, "toggle", "Показать/Скрыть HUD", true, None::<&str>)?;

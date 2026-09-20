@@ -132,7 +132,32 @@ export const Taskbar: React.FC<TaskbarProps> = ({
     audioDevices.find(d => d.deviceId === selectedDeviceId)?.label || 'Микрофон по умолчанию';
 
   if (!visible) {
-    return null;
+    return (
+      <div
+        id="taskbar-collapsed-zone"
+        data-interactive="true"
+        className="fixed bottom-0 left-1/2 -translate-x-1/2 z-50 mb-1 group cursor-pointer"
+        onClick={() => {
+          setVisible(true);
+          soundEffects.playCompletionPing();
+          actionLogger.info('ui', 'Панель задач развернута');
+        }}
+        title="Нажмите чтобы развернуть панель задач (Alt+T)"
+      >
+        <div
+          id="restore-taskbar-pill"
+          className="px-3 py-1 rounded-full border shadow-xl flex items-center gap-1.5 backdrop-blur-xl transition-all group-hover:scale-105 group-hover:border-[var(--c-peach)]"
+          style={{
+            backgroundColor: 'rgba(11, 14, 20, 0.85)',
+            borderColor: 'var(--c-border)',
+            color: 'var(--c-text-muted)'
+          }}
+        >
+          <ChevronUp className="w-3.5 h-3.5 text-[var(--c-peach)] group-hover:-translate-y-0.5 transition-transform" />
+          <span className="text-[11px] font-medium group-hover:text-[var(--c-text)]">Панель задач</span>
+        </div>
+      </div>
+    );
   }
 
   return (

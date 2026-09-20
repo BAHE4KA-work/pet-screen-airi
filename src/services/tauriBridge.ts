@@ -140,5 +140,20 @@ export const tauriBridge = {
       body: JSON.stringify({ category })
     });
     return res.json();
+  },
+
+  /**
+   * Listen to global Tauri events (e.g. global hotkeys from OS)
+   */
+  async listen(event: string, handler: (payload: any) => void): Promise<(() => void) | undefined> {
+    if (isTauri()) {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        return await listen(event, (e) => handler(e.payload));
+      } catch (err) {
+        console.warn('[Tauri] Failed to register event listener:', err);
+      }
+    }
+    return undefined;
   }
 };

@@ -213,12 +213,53 @@ export default function App() {
   // Hardware Click-Through and Focus handling for Tauri
   useEffect(() => {
     if (tauriBridge.isTauri()) {
-      // In Tauri: window is fully interactive by default so user can click, drag, and interact with all elements.
-      // Click-through is only engaged if user explicitly enabled Ghost Mode, or if the entire HUD and all windows are hidden.
-      const shouldIgnore = isGhostMode || (!hudVisible && views.length === 0 && !settingsOpen && !isTaskbarVisible);
-      tauriBridge.setClickThrough(shouldIgnore);
+      // In Tauri: click-through is ONLY engaged if the user explicitly enabled Ghost Mode.
+      // When Ghost Mode is off, the window must process pointer events so the eye summon button,
+      // taskbar, views, and HUD are immediately clickable and responsive.
+      tauriBridge.setClickThrough(isGhostMode);
     }
-  }, [isGhostMode, hudVisible, views.length, settingsOpen, isTaskbarVisible]);
+  }, [isGhostMode]);
+
+  // Subscribe to Tauri global OS shortcut events (Alt+Space, Alt+T, Alt+G)
+  useEffect(() => {
+    if (tauriBridge.isTauri()) {
+      const unlistenHudPromise = tauriBridge.listen('global-hotkey-toggle-hud', () => {
+        setHudVisible(prev => {
+          const next = !prev;
+          actionLogger.info('ui', next ? 'HUD оверлей вызван (Alt+Space)' : 'HUD оверлей скрыт (Alt+Space)');
+          return next;
+        });
+      });
+
+      const unlistenTaskbarPromise = tauriBridge.listen('global-hotkey-toggle-taskbar', () => {
+        setIsTaskbarVisible(prev => {
+          const next = !prev;
+          actionLogger.info('ui', next ? 'Панель задач развернута (Alt+T)' : 'Панель задач скрыта (Alt+T)');
+          return next;
+        });
+      });
+
+      const unlistenGhostPromise = tauriBridge.listen('global-hotkey-toggle-ghost', () => {
+        setIsGhostMode(prev => {
+          const next = !prev;
+          if (next) {
+            soundEffects.playWarningCue();
+            actionLogger.info('ui', 'Сквозной режим (Ghost Mode) включен (Alt+G)');
+          } else {
+            soundEffects.playCompletionPing();
+            actionLogger.info('ui', 'Сквозной режим выключен (Alt+G)');
+          }
+          return next;
+        });
+      });
+
+      return () => {
+        unlistenHudPromise.then(unlisten => unlisten && unlisten());
+        unlistenTaskbarPromise.then(unlisten => unlisten && unlisten());
+        unlistenGhostPromise.then(unlisten => unlisten && unlisten());
+      };
+    }
+  }, []);
 
   // Dynamic Electron hardware click-through / interactivity management
   // ONLY for Electron (because Electron's setIgnoreMouseEvents with { forward: true } passes mousemove back to renderer)
@@ -256,7 +297,11 @@ export default function App() {
         target.closest('#corner-dock-controls') ||
         target.closest('#settings-modal-window') ||
         target.closest('#summon-hud-eye-btn') ||
+        target.closest('#overlay-taskbar-panel') ||
         target.closest('#taskbar-panel') ||
+        target.closest('#taskbar-collapsed-zone') ||
+        target.closest('#restore-taskbar-pill') ||
+        target.closest('#dock-taskbar-toggle-btn') ||
         target.closest('button, input, textarea, a, select, [role="button"]') ||
         target.dataset.interactive === 'true' ||
         target.getAttribute('data-interactive') === 'true'
@@ -272,13 +317,15 @@ export default function App() {
         target === document.body ||
         target === document.documentElement;
 
-      // Allow bottom edge (taskbar zone) to pass directly to host OS taskbar/dock
+      // Allow bottom edge (taskbar zone) to pass directly to host OS taskbar/dock only if not over taskbar UI
       const isInsideInteractiveWindow = Boolean(
         target.closest('#floating-hud-window') ||
         target.closest('.view-window') ||
         target.closest('#settings-modal-window') ||
         target.closest('#corner-dock-controls') ||
-        target.closest('#taskbar-panel')
+        target.closest('#overlay-taskbar-panel') ||
+        target.closest('#taskbar-collapsed-zone') ||
+        target.closest('#summon-hud-eye-btn')
       );
       const isNearTaskbarEdge = clientY >= window.innerHeight - 24 && !isInsideInteractiveWindow;
 
@@ -636,7 +683,14 @@ export default function App() {
       }
 
       // 4. Quick actions
-      if (hotkeyManager.matches('toggle_ghost_mode', e) || (e.altKey && e.key.toLowerCase() === 'g')) {
+      if (hotkeyManager.matches('toggle_taskbar', e) || (e.altKey && e.key.toLowerCase() === 't')) {
+        e.preventDefault();
+        setIsTaskbarVisible(prev => {
+          const next = !prev;
+          actionLogger.info('ui', next ? 'Панель задач развернута (Alt+T)' : 'Панель задач скрыта (Alt+T)');
+          return next;
+        });
+      } else if (hotkeyManager.matches('toggle_ghost_mode', e) || (e.altKey && e.key.toLowerCase() === 'g')) {
         e.preventDefault();
         setIsGhostMode(prev => {
           const next = !prev;
@@ -860,6 +914,24 @@ export default function App() {
             }
           >
             <Ghost className="w-4 h-4" />
+          </button>
+
+          {/* Taskbar Toggle */}
+          <button
+            id="dock-taskbar-toggle-btn"
+            onClick={() => {
+              const next = !isTaskbarVisible;
+              setIsTaskbarVisible(next);
+              actionLogger.info('ui', next ? 'Панель задач развернута' : 'Панель задач скрыта');
+            }}
+            className={`p-2 rounded-lg transition-colors ${
+              isTaskbarVisible
+                ? 'text-[var(--c-peach)] bg-[var(--c-peach-surface)]'
+                : 'text-[var(--c-text-muted)] hover:text-[var(--c-peach)]'
+            }`}
+            title={isTaskbarVisible ? 'Скрыть панель задач (Alt+T)' : 'Показать панель задач (Alt+T)'}
+          >
+            <PanelBottom className="w-4 h-4" />
           </button>
 
           <button

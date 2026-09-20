@@ -47,6 +47,12 @@ export const DEFAULT_HOTKEYS: HotkeyItem[] = [
     label: 'Сквозной клик (Ghost mode)',
     keys: 'Alt+G',
     description: 'Включение или отключение сквозных кликов сквозь оверлей'
+  },
+  {
+    id: 'toggle_taskbar',
+    label: 'Показать / скрыть панель задач',
+    keys: 'Alt+T',
+    description: 'Быстрое переключение видимости нижней панели задач'
   }
 ];
 
