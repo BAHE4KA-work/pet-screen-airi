@@ -1,6 +1,5 @@
 use ini::Ini;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -54,9 +53,9 @@ pub fn get_modules_list() -> Result<Vec<IniModuleItem>, String> {
                         if let Some(sec_name) = sec {
                             if sec_name.starts_with("tool.") {
                                 let tool_name = sec_name.trim_start_matches("tool.").to_string();
-                                let tool_desc = prop.get("description").cloned().unwrap_or_default();
+                                let tool_desc = prop.get("description").unwrap_or_default().to_string();
                                 let tool_enabled = prop.get("enabled").map_or(true, |v| v == "true" || v == "1");
-                                let hotkey = prop.get("hotkey").cloned();
+                                let hotkey = prop.get("hotkey").map(|s| s.to_string());
 
                                 tools.push(ModuleToolItem {
                                     name: tool_name,

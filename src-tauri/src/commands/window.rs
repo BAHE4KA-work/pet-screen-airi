@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::WebviewWindow;
 
 #[tauri::command]
 pub fn set_click_through(window: WebviewWindow, ignore: bool) -> Result<(), String> {
